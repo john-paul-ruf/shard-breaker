@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
+import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppStatusBar } from "./AppStatusBar";
+import { ConfirmationDialog } from "./ConfirmationDialog";
 import { IntegrityMeter } from "./IntegrityMeter";
+import { SaveSignal } from "./SaveSignal";
 
 // Testing Library does not auto-clean without global test hooks (globals are
 // off in this project), so unmount between cases explicitly.
@@ -115,5 +118,184 @@ describe("IntegrityMeter", () => {
     const meter = screen.getByRole("img", { name: "1 of 1 Integrity" });
     expect(within(meter).getByText("1 / 1")).toBeInTheDocument();
     expect(meter.querySelectorAll(".integrity-meter__pip")).toHaveLength(1);
+  });
+});
+
+describe("ConfirmationDialog", () => {
+  function renderDialog(
+    overrides: Partial<React.ComponentProps<typeof ConfirmationDialog>> = {},
+  ) {
+    const returnFocusRef = { current: document.createElement("button") };
+    const props: React.ComponentProps<typeof ConfirmationDialog> = {
+      isOpen: true,
+      title: "Living run detected",
+      description: "Circuit Rogue at Depth 02 is already saved.",
+      isBusy: false,
+      returnFocusRef,
+      onResume: vi.fn(),
+      onConfirmAbandon: vi.fn(),
+      onCancel: vi.fn(),
+      ...overrides,
+    };
+    return { ...render(<ConfirmationDialog {...props} />), props };
+  }
+
+  it("renders nothing while closed", () => {
+    renderDialog({ isOpen: false });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens as a labelled modal and initially focuses the reversible action", () => {
+    renderDialog();
+    const dialog = screen.getByRole("dialog", { name: "Living run detected" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog).toHaveAccessibleDescription(
+      "Circuit Rogue at Depth 02 is already saved.",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Resume living run" }),
+    ).toHaveFocus();
+  });
+
+  it("contains forward and reverse tab order inside the dialog", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    const resume = screen.getByRole("button", { name: "Resume living run" });
+    const abandon = screen.getByRole("button", { name: "Abandon & start" });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+
+    await user.tab();
+    expect(abandon).toHaveFocus();
+    await user.tab();
+    expect(cancel).toHaveFocus();
+    await user.tab();
+    expect(resume).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(cancel).toHaveFocus();
+  });
+
+  it("dispatches all three decisions and supports Escape cancellation", async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    const onConfirmAbandon = vi.fn();
+    const onCancel = vi.fn();
+    renderDialog({ onResume, onConfirmAbandon, onCancel });
+
+    await user.click(screen.getByRole("button", { name: "Resume living run" }));
+    await user.click(screen.getByRole("button", { name: "Abandon & start" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(onConfirmAbandon).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels from the backdrop but not from dialog content", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    const { container } = renderDialog({ onCancel });
+    const backdrop = container.querySelector(".confirmation-backdrop");
+    if (!(backdrop instanceof HTMLElement)) {
+      throw new Error("expected confirmation backdrop");
+    }
+
+    await user.click(screen.getByRole("dialog"));
+    expect(onCancel).not.toHaveBeenCalled();
+    await user.click(backdrop);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks repeat decisions and cancellation while busy", async () => {
+    const user = userEvent.setup();
+    const onConfirmAbandon = vi.fn();
+    const onCancel = vi.fn();
+    const { container } = renderDialog({
+      isBusy: true,
+      onConfirmAbandon,
+      onCancel,
+    });
+    const dialog = screen.getByRole("dialog");
+    const abandon = screen.getByRole("button", { name: "Abandon & start" });
+
+    expect(dialog).toHaveAttribute("aria-busy", "true");
+    expect(abandon).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Action in progress");
+    await user.click(abandon);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    const backdrop = container.querySelector(".confirmation-backdrop");
+    if (!(backdrop instanceof HTMLElement)) {
+      throw new Error("expected confirmation backdrop");
+    }
+    await user.click(backdrop);
+
+    expect(onConfirmAbandon).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("returns focus to the opening trigger after cancellation", async () => {
+    function DialogHarness() {
+      const [isOpen, setIsOpen] = useState(false);
+      const triggerRef = useRef<HTMLButtonElement>(null);
+
+      return (
+        <>
+          <button ref={triggerRef} type="button" onClick={() => setIsOpen(true)}>
+            Start new run
+          </button>
+          <ConfirmationDialog
+            isOpen={isOpen}
+            title="Living run detected"
+            description="A living run is saved."
+            isBusy={false}
+            returnFocusRef={triggerRef}
+            onResume={() => setIsOpen(false)}
+            onConfirmAbandon={() => setIsOpen(false)}
+            onCancel={() => setIsOpen(false)}
+          />
+        </>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<DialogHarness />);
+    const trigger = screen.getByRole("button", { name: "Start new run" });
+    await user.click(trigger);
+    expect(screen.getByRole("button", { name: "Resume living run" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(trigger).toHaveFocus();
+  });
+});
+
+describe("SaveSignal", () => {
+  it("renders no live region without a signal", () => {
+    render(<SaveSignal signal={null} />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["saved", "Checkpoint committed", "Saved: Checkpoint committed"],
+    ["warning", "Running from the last valid save", "Warning: Running from the last valid save"],
+  ] as const)("announces %s feedback politely", (tone, message, visibleText) => {
+    render(<SaveSignal signal={{ tone, message }} />);
+    const status = screen.getByRole("status");
+    expect(status).toHaveAttribute("aria-live", "polite");
+    expect(status).toHaveTextContent(visibleText);
+    expect(status).toHaveAttribute("data-tone", tone);
+  });
+
+  it("announces a rejected durable action urgently with visible failure text", () => {
+    render(
+      <SaveSignal
+        signal={{ tone: "rejected", message: "The living run was not replaced." }}
+      />,
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveAttribute("aria-live", "assertive");
+    expect(alert).toHaveTextContent(
+      "Save rejected: The living run was not replaced.",
+    );
+    expect(alert).toHaveAttribute("data-tone", "rejected");
   });
 });
