@@ -1,6 +1,5 @@
 import type { DBSchema, IDBPDatabase } from "idb";
 
-import type { ContentId } from "../domain/content/catalog";
 import type { RunPersistenceInstruction } from "../domain/run/commands";
 import type {
   LivingRun,
@@ -90,6 +89,3 @@ export interface RunLifecycleRepository {
     instruction: AbandonRunPersistenceInstruction,
   ): Promise<PersistenceResult<RunState>>;
 }
-
-/** Helper for callers that must pass opaque authored identifiers explicitly. */
-export type PersistedContentId = ContentId;

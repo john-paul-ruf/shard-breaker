@@ -172,6 +172,17 @@ describe("living-run record validation", () => {
     ["wrong class Integrity", (run: LivingRun) => ({ ...run, integrityMax: 3 })],
     ["unsafe depth", (run: LivingRun) => ({ ...run, depth: 2 ** 53 })],
     ["bad cycle", (run: LivingRun) => ({ ...run, cycle: 2 })],
+    [
+      "empty route after depth one",
+      (run: LivingRun) => ({
+        ...run,
+        depth: 2,
+        routeState: {
+          ...run.routeState!,
+          eventKey: "route:content-1:run-1:2",
+        },
+      }),
+    ],
     ["infinite currency", (run: LivingRun) => ({ ...run, runCurrency: Number.POSITIVE_INFINITY })],
     [
       "active-skill cap",

@@ -502,7 +502,34 @@ function isPlainData(value: unknown, ancestors = new Set<object>()): boolean {
 
   ancestors.add(value);
   if (Array.isArray(value)) {
-    const isValid = value.every((entry) => isPlainData(entry, ancestors));
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      ancestors.delete(value);
+      return false;
+    }
+    const keys = Reflect.ownKeys(value);
+    const hasOnlyIndexes = keys.every((key) => {
+      if (key === "length") return true;
+      if (typeof key !== "string") return false;
+      const index = Number(key);
+      return Number.isSafeInteger(index) && index >= 0 && String(index) === key;
+    });
+    if (!hasOnlyIndexes) {
+      ancestors.delete(value);
+      return false;
+    }
+    let isValid = true;
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        !descriptor.enumerable ||
+        !isPlainData(descriptor.value, ancestors)
+      ) {
+        isValid = false;
+        break;
+      }
+    }
     ancestors.delete(value);
     return isValid;
   }
@@ -519,7 +546,7 @@ function isPlainData(value: unknown, ancestors = new Set<object>()): boolean {
       return false;
     }
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (descriptor === undefined || !("value" in descriptor)) {
+    if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
       ancestors.delete(value);
       return false;
     }
@@ -668,6 +695,13 @@ function livingRunSemanticDiagnostics(
         code: "invalid-route-event-key",
         path: "livingRun.routeState.eventKey",
         message: "empty route state has an invalid deterministic event key",
+      });
+    }
+    if (run.depth !== 1) {
+      issues.push({
+        code: "invalid-empty-route-depth",
+        path: "livingRun.depth",
+        message: "only the initial depth-one route may be unmaterialized",
       });
     }
   }
