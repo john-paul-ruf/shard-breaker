@@ -42,7 +42,7 @@ export function AppStatusBar({
     shards === null ? "Shards unavailable" : `${formatBoundedCount(shards)} Shards`;
 
   return (
-    <header className="app-status-bar">
+    <header className="app-status-bar" aria-busy={isBusy}>
       <span className="brand-lockup">
         <span aria-hidden="true">⌁</span>
         <span>SHARDBREAK</span>
@@ -54,7 +54,7 @@ export function AppStatusBar({
           </span>
         ) : null}{" "}
         <span className="resource-counter" aria-label={shardsLabel}>
-          {shards === null ? "—" : formatBoundedCount(shards)} Shards
+          Local only · {shards === null ? "—" : formatBoundedCount(shards)} Shards
         </span>{" "}
         {onReturnToArchive !== undefined ? (
           <button

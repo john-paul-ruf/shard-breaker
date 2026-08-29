@@ -14,13 +14,17 @@ afterEach(cleanup);
 
 describe("AppStatusBar", () => {
   it("names the local Shards readout with grouped, bounded formatting", () => {
-    render(<AppStatusBar shards={1248} activeRun={null} isBusy={false} />);
-    expect(screen.getByLabelText("1,248 Shards")).toHaveTextContent("1,248 Shards");
+    render(<AppStatusBar shards={12048} activeRun={null} isBusy={false} />);
+    expect(screen.getByLabelText("12,048 Shards")).toHaveTextContent(
+      "Local only · 12,048 Shards",
+    );
   });
 
   it("shows a placeholder rather than a number when Shards are unavailable", () => {
     render(<AppStatusBar shards={null} activeRun={null} isBusy={false} />);
-    expect(screen.getByLabelText("Shards unavailable")).toHaveTextContent("— Shards");
+    expect(screen.getByLabelText("Shards unavailable")).toHaveTextContent(
+      "Local only · — Shards",
+    );
   });
 
   it("renders active-run context only when a run is live", () => {
@@ -66,6 +70,7 @@ describe("AppStatusBar", () => {
         onReturnToArchive={onReturnToArchive}
       />,
     );
+    expect(screen.getByRole("banner")).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Return to archive" })).toBeDisabled();
   });
 });
@@ -219,6 +224,7 @@ describe("ConfirmationDialog", () => {
     const abandon = screen.getByRole("button", { name: "Abandon & start" });
 
     expect(dialog).toHaveAttribute("aria-busy", "true");
+    expect(dialog).toHaveFocus();
     expect(abandon).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("Action in progress");
     await user.click(abandon);
@@ -228,9 +234,11 @@ describe("ConfirmationDialog", () => {
       throw new Error("expected confirmation backdrop");
     }
     await user.click(backdrop);
+    fireEvent.keyDown(dialog, { key: "Tab" });
 
     expect(onConfirmAbandon).not.toHaveBeenCalled();
     expect(onCancel).not.toHaveBeenCalled();
+    expect(dialog).toHaveFocus();
   });
 
   it("returns focus to the opening trigger after cancellation", async () => {

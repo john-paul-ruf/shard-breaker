@@ -37,7 +37,11 @@ export function ConfirmationDialog({
   useEffect(() => {
     if (isOpen) {
       wasOpenRef.current = true;
-      resumeButtonRef.current?.focus();
+      if (isBusy) {
+        dialogRef.current?.focus();
+      } else {
+        resumeButtonRef.current?.focus();
+      }
       return;
     }
 
@@ -45,7 +49,7 @@ export function ConfirmationDialog({
       wasOpenRef.current = false;
       returnFocusRef.current?.focus();
     }
-  }, [isOpen, returnFocusRef]);
+  }, [isBusy, isOpen, returnFocusRef]);
 
   if (!isOpen) {
     return null;
@@ -75,6 +79,7 @@ export function ConfirmationDialog({
     );
     if (focusableControls.length === 0) {
       event.preventDefault();
+      dialogRef.current?.focus();
       return;
     }
 
@@ -97,6 +102,7 @@ export function ConfirmationDialog({
         ref={dialogRef}
         className="confirmation-dialog"
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={describedBy}
