@@ -53,9 +53,26 @@
   return focus, live-region feedback, charge/integrity edge states, and non-color
   labels. Avoid assertions coupled only to implementation classes.
 
+<!-- SESSION-05 -->
+## Launch Lifecycle Component Contracts
+
+- `AppStatusBarProps` controls local Shards, optional active class/depth context,
+  busy state, and an optional archive callback. No callback means no inert or
+  fabricated control.
+- `IntegrityMeterProps` controls current/maximum Integrity and an optional label.
+  The meter bounds malformed input, exposes one accessible value, and keeps its
+  decorative pips out of repeated announcements.
+- `ConfirmationDialogProps` controls open/busy state, title/description, the
+  return-focus ref, and Resume/Abandon/Cancel callbacks. The modal starts on the
+  reversible action, contains forward/reverse tab order, blocks Escape/backdrop
+  cancellation while busy, and returns focus when it closes.
+- `SaveSignalView` is `saved`, `warning`, `rejected`, or `null` with visible
+  message text. Saved/warning feedback is polite; rejected durable actions are
+  urgent. `SaveSignal` owns no timeout.
+
 ## Change History
 
 | Date | Change |
 |------|--------|
+| 2026-08-29 | Added controlled status, Integrity, overwrite-confirmation, and save-feedback primitives. |
 | 2026-08-29 | Imported Genesis M09 contract into the Forge registry. |
-

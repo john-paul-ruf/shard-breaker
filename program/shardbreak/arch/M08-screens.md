@@ -52,9 +52,31 @@
   disabled reasons, selection/confirmation, command dispatch, and all important
   phase states. Playwright covers complete cross-screen flows.
 
+<!-- SESSION-05 -->
+## Launch Archive Contract
+
+- `HomeScreenProps` is controlled by a `HomeScreenViewModel` plus
+  `dispatch(command: AppCommand)`. `AppCommand`, `ContentId`, and save-feedback
+  contracts are imported type-only; the screen has no application-store runtime
+  dependency.
+- `HomeScreenViewModel` exposes archive/checkpoint mode, ready/busy/error load
+  state, local Shards and record depth, the three class projections and selected
+  ID, zero/one durable living-run projection, replacement-guard/busy state, and
+  controlled save feedback.
+- Archive mode dispatches only `home/select-class`, `run/request-start`,
+  `run/resume`, `run/cancel-replacement`, and
+  `run/confirm-abandon-and-start`. A first Start request never dispatches
+  abandonment directly when a living run exists.
+- Checkpoint mode repeats the durable class, depth, Integrity, boss count, and
+  saved state within the launch archive and dispatches only
+  `run/return-to-archive`; it does not fabricate route, room, or reward content.
+- The class selector implements a roving, arrow-key-operable radio group,
+  preserves a visible locked Neon Mage explanation, and pairs checked/disabled
+  semantics with `SELECTED`/`LOCKED` text.
+
 ## Change History
 
 | Date | Change |
 |------|--------|
+| 2026-08-29 | Added the controlled accessible launch archive and restored-checkpoint composition. |
 | 2026-08-29 | Imported Genesis M08 and screen design contracts into the Forge registry. |
-
