@@ -272,3 +272,201 @@ button:focus-visible,
   border-left-color: var(--color-signal-danger);
   color: var(--color-signal-danger);
 }
+
+/*
+ * Launch archive composition. Desktop is the base two-region layout; the
+ * tablet/phone reflow and reduced-motion overrides live in responsive.css.
+ * Every stateful surface pairs its color with a border, shape, or attribute so
+ * no state is signalled by color alone.
+ */
+
+.launch-archive {
+  width: min(var(--layout-max-width), 100%);
+  margin: 0 auto;
+  padding: var(--space-48) var(--space-gutter-desktop) var(--space-32);
+}
+
+.launch-archive__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(430px, 0.92fr);
+  gap: var(--space-24);
+}
+
+/* Hero: large uppercase premise with the SHARDBREAK misregistration accent. */
+.launch-hero {
+  display: flex;
+  position: relative;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  padding: var(--space-32);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-shell);
+  background: linear-gradient(145deg, rgb(20 30 48 / 88%), rgb(10 15 26 / 88%));
+}
+
+/* Offset cyan/magenta rule: the misregistered arcade motif. Decorative and
+   pointer-transparent. */
+.launch-hero::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 44%;
+  height: 3px;
+  background: var(--color-signal-cyan);
+  box-shadow: 200px 0 0 var(--color-signal-magenta);
+  pointer-events: none;
+}
+
+.launch-hero h1 {
+  font-weight: 900;
+  font-size: clamp(3.5rem, 7vw, 6.8rem);
+  line-height: 0.84;
+  letter-spacing: -0.09em;
+  text-transform: uppercase;
+}
+
+/* Compact three-step run-loop telemetry. */
+.run-loop-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-12);
+}
+
+.run-loop-steps > * {
+  min-height: 92px;
+  padding: var(--space-12);
+  border: 1px solid var(--line-translucent);
+  background: rgb(7 10 18 / 44%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.launch-panel {
+  padding: var(--space-24);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-card);
+  background: var(--color-panel);
+}
+
+.launch-panel h2 {
+  font-weight: 900;
+  font-size: 25px;
+  letter-spacing: -0.04em;
+  text-transform: uppercase;
+}
+
+/* Cyan living-run strip: the resume affordance. The left accent bar and label
+   (supplied by markup) carry meaning beyond the cyan tint. */
+.living-run-strip {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-16);
+  padding: var(--space-16);
+  border: 1px solid rgb(84 246 209 / 38%);
+  border-left: 3px solid var(--color-signal-cyan);
+  border-radius: var(--radius-control);
+  background: linear-gradient(90deg, rgb(84 246 209 / 8%), rgb(84 246 209 / 2%));
+  box-shadow: var(--glow-cyan);
+}
+
+.class-selector {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.class-card {
+  display: grid;
+  position: relative;
+  grid-template-columns: var(--space-32) 1fr auto;
+  align-items: center;
+  gap: var(--space-12);
+  width: 100%;
+  padding: var(--space-12);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-control);
+  background: rgb(20 30 48 / 62%);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Selected: cyan border and tint plus a thicker left accent bar (shape), read
+   alongside the aria-checked state and the SELECTED label from markup. */
+.class-card[aria-checked="true"] {
+  border-color: var(--color-signal-cyan);
+  border-left-width: 3px;
+  background: linear-gradient(90deg, rgb(84 246 209 / 14%), rgb(84 246 209 / 3.5%));
+  box-shadow: var(--glow-cyan);
+}
+
+/* Locked: reduced contrast plus a dashed border (shape) and the aria-disabled
+   state; the LOCKED label comes from markup. */
+.class-card[aria-disabled="true"] {
+  border-style: dashed;
+  background: rgb(20 30 48 / 40%);
+  color: var(--color-text-tertiary);
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+.class-card:not([aria-disabled="true"]):hover {
+  border-color: rgb(84 246 209 / 60%);
+}
+
+.launch-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-8);
+}
+
+/* Destructive overwrite guard. Mounted only while confirmation is required. */
+.confirmation-backdrop {
+  display: flex;
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-24);
+  background: rgb(2 4 9 / 78%);
+}
+
+.confirmation-dialog {
+  width: min(480px, 100%);
+  padding: var(--space-24);
+  border: 1px solid var(--color-signal-danger);
+  border-top: 3px solid var(--color-signal-danger);
+  border-radius: var(--radius-card);
+  background: #10131f;
+  box-shadow: var(--glow-danger);
+}
+
+.confirmation-dialog__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-8);
+  margin-top: var(--space-24);
+}
+
+/* Restored-checkpoint mode surface inside the launch archive. */
+.checkpoint-open {
+  padding: var(--space-24);
+  border: 1px solid rgb(84 246 209 / 38%);
+  border-left: 3px solid var(--color-signal-cyan);
+  border-radius: var(--radius-card);
+  background: var(--color-raised);
+}
+
+/* Busy/loading: a static high-contrast treatment (dashed border, progress
+   cursor) rather than an animated spinner. */
+.action-button[aria-busy="true"] {
+  border-style: dashed;
+  color: var(--color-text-secondary);
+  box-shadow: none;
+  cursor: progress;
+}

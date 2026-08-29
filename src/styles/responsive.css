@@ -1,0 +1,85 @@
+/* stylelint-disable selector-class-pattern -- Same BEM __/-- artifact contract
+   as global.css (e.g. launch-archive__grid); the kebab-only standard pattern
+   cannot express it and the stylelint config is outside this session's lease. */
+
+/*
+ * Responsive reflow and reduced-motion behaviour for the launch archive.
+ * global.css carries the desktop (>= 1024px) composition as its base; this file
+ * collapses it for tablet and phone in urgency order and strips decorative
+ * motion. No rule or state is removed at any width — only re-laid-out.
+ */
+
+/* Tablet (721px–1023px) and below: collapse the two launch regions to a single
+   column and lead with the actionable panel (living-run/resume + selection)
+   ahead of the supporting premise hero, in urgency order. Phone widths match
+   this query too, so the ordering carries down. */
+@media (width <= 1023px) {
+  .launch-archive__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .launch-panel {
+    order: 1;
+  }
+
+  .launch-hero {
+    order: 2;
+  }
+}
+
+/* Portrait phone (<= 720px): 56px bar, 16px gutters, urgent run state first,
+   and single-column actions and dialog. No horizontal scroll at 320px. */
+@media (width <= 720px) {
+  .app-status-bar {
+    min-height: var(--size-status-bar-phone);
+    padding: 0 var(--space-gutter-phone);
+  }
+
+  .launch-archive {
+    padding: var(--space-24) var(--space-gutter-phone);
+  }
+
+  .launch-archive__grid {
+    gap: var(--space-16);
+  }
+
+  .living-run-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .launch-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .confirmation-dialog__actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Reduced motion: remove decorative transitions, pulsing glows, and the
+   scanline overlay. Selection borders, labels, static offsets, and focus rings
+   all survive, so every state stays legible. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+
+  body::after {
+    display: none;
+  }
+
+  .action-button:hover,
+  .action-button--danger:hover,
+  .living-run-strip,
+  .class-card[aria-checked="true"],
+  .integrity-meter__pip[data-filled="true"],
+  .confirmation-dialog,
+  .checkpoint-open {
+    box-shadow: none;
+  }
+}
