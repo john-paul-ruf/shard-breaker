@@ -61,3 +61,36 @@
 |------|--------|
 | 2026-08-29 | Imported Genesis M05 contract into the Forge registry. |
 
+<!-- SESSION-02 -->
+## M05 — Run and profile state machine (`./src/domain/run/`)
+
+- `model.ts` — full serialized v1 domain types (readonly): `Profile`, `LivingRun`,
+  `RunState` (`{ profile; livingRun | null }`), plus nested `ProfileUnlocks`,
+  `UtilityUpgradeLevel`, `RelicState`, `PersonalRecords`, `RunSummarySnapshot`,
+  `PendingRelicChoice`, `BuildSnapshot`, `RunProgress`, `RouteState`,
+  `RouteOfferSnapshot`, `RoomState` and its combat/shop/recovery/boss/threat
+  snapshots, `RewardState`/`RewardCardSnapshot`, `EffectParam`. Constants
+  `SAVE_SCHEMA_VERSION = 1`, `CURRENT_RECORD_KEY = "current"`. Factories
+  `createDefaultProfile(catalog, {profileId, now, commitId})` and
+  `createInitialLivingRun(contentVersion, classId, startingIntegrity,
+  carryOverRelicId, {runId, seed, now, commitId})` — all nondeterministic inputs are
+  parameters.
+- `routes.ts` — `isValidDepth(depth)`; `cycleForDepth(depth)` (`floor((depth-1)/3)+1`,
+  throws `RangeError` on unsafe/zero/negative depth); `isBossDepth(depth)`;
+  `routeEventKey(runId, contentVersion, depth)`; `createInitialRouteState(runId,
+  contentVersion)` → empty offers, null selection, uncommitted, deterministic key.
+- `validation.ts` — `ValidationIssue`, `ValidationResult`; `validateProfile`,
+  `validateLivingRun`, `validateRunState` (cross-field: singleton key, versions,
+  revisions, known class IDs, depth/cycle, Integrity bounds, build caps, phase-state
+  coherence, closed empty-route rule).
+- `commands.ts` — `RunCommand` (`StartRun` | `AbandonRun`, caller-supplied identity /
+  seed / clock / revision metadata); discriminated `RunRejection`
+  (`living-run-exists`, `no-living-run`, `unknown-class`, `class-locked`,
+  `stale-profile-revision`, `stale-run`, `stale-run-revision`, `invalid-metadata`,
+  `invalid-state`); `RunPersistenceInstruction` (`start-run` | `abandon-run`);
+  `RunTransition`.
+- `reducer.ts` — `runReducer(state, command, catalog): RunTransition`. Pure. `StartRun`
+  creates exactly one depth-1/cycle-1 living run with class Integrity and an optional
+  copied carry-over relic, and does not mutate/increment the profile. `AbandonRun`
+  removes the living run and grants nothing. No React/browser/persistence/random/time
+  imports.

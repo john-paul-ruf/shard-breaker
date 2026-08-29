@@ -59,3 +59,10 @@ not mutate domain state or call IndexedDB directly.
 |------|--------|
 | 2026-08-29 | Imported Genesis M01 contract into the Forge registry. |
 
+<!-- SESSION-02 -->
+## M01 — Application shell and command store (`./src/app/`)
+
+- `commands.ts` — `AppCommand` union: `home/select-class` (carries `classId`),
+  `run/request-start`, `run/resume`, `run/cancel-replacement`,
+  `run/confirm-abandon-and-start`, `run/return-to-archive`. Controlled intent only;
+  no metadata from the DOM, no React/screen imports, no mutable re-exports.

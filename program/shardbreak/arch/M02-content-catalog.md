@@ -64,3 +64,17 @@
 |------|--------|
 | 2026-08-29 | Imported Genesis M02 contract into the Forge registry. |
 
+<!-- SESSION-02 -->
+## M02 — Authored content catalog (`./src/domain/content/`)
+
+- `classes.ts` — `ClassDefinition` (`id`, `displayName`, `startingIntegrity: 2|3|4`,
+  `tradeoff`, `availability`); `CLASS_DEFINITIONS` frozen readonly array of the three
+  authored classes.
+- `catalog.ts` — branded `ContentId` and `ContentVersion`; `ContentAvailability =
+  "initial" | "locked"`; `ContentLookupResult<T>` (typed success/`unknown-content-id`
+  failure); `CONTENT_VERSION = "content-1"`; `ContentCatalog` facade
+  (`contentVersion`, `listClasses()`, `getClass(id)`, `hasClass(id)`,
+  `initialClassUnlockIds()`); `createContentCatalog()` (throws on duplicate authored
+  IDs at construction — no runtime content service).
+- Class availability: Circuit Rogue (3) and Glitch Knight (4) are `initial`; Neon Mage
+  (2) is `locked` (defined and visible, but not in the initial unlock projection).
