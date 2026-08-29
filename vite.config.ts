@@ -4,17 +4,25 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 /**
- * Normalize the GitHub Pages base path to a single leading and trailing slash.
- * The local default is the site root so `vite dev` and unit builds do not need
- * the deployment prefix.
+ * Normalize the GitHub Pages base path to exactly one leading and one trailing
+ * slash. The local default is the site root so `vite dev` and unit builds do
+ * not need the deployment prefix. Unsafe values are rejected rather than
+ * silently rewritten, and the repository name is never hardcoded.
  */
 function normalizeBasePath(raw: string | undefined): string {
   const trimmed = (raw ?? "").trim();
   if (trimmed === "" || trimmed === "/") {
     return "/";
   }
-  const collapsed = `/${trimmed}/`.replace(/\/{2,}/g, "/");
-  return collapsed;
+  if (
+    /\s/.test(trimmed) ||
+    trimmed.includes("..") ||
+    trimmed.includes("://") ||
+    trimmed.includes("\\")
+  ) {
+    throw new Error(`Unsafe VITE_BASE_PATH: ${JSON.stringify(raw)}`);
+  }
+  return `/${trimmed}/`.replace(/\/{2,}/g, "/");
 }
 
 // The HTML application entry is owned by a later session. Until it exists, Vite
@@ -40,6 +48,8 @@ const scaffoldLibrary = hasApplicationEntry
 
 export default defineConfig({
   base: normalizeBasePath(process.env.VITE_BASE_PATH),
-  plugins: [react()],
+  // React is only needed for the real HTML application build; the scaffold
+  // library build of the plain-TypeScript migration must not load it.
+  plugins: hasApplicationEntry ? [react()] : [],
   ...(scaffoldLibrary ? { build: scaffoldLibrary } : {}),
 });
