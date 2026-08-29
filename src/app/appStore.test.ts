@@ -17,6 +17,7 @@ import { createAppStore } from "./appStore";
 const catalog = createContentCatalog();
 const CIRCUIT_ROGUE = "class-circuit-rogue" as ContentId;
 const GLITCH_KNIGHT = "class-glitch-knight" as ContentId;
+const NEON_MAGE = "class-neon-mage" as ContentId;
 
 function makeProfile(): Profile {
   return createDefaultProfile(catalog, {
@@ -65,14 +66,23 @@ function repositoryFor(
   };
 }
 
-function createTestStore(repository: RunLifecycleRepository) {
-  const ids = ["profile-created", "commit-bootstrap-created"];
+interface TestSources {
+  readonly ids?: readonly string[];
+  readonly seed?: string;
+  readonly now?: number;
+}
+
+function createTestStore(
+  repository: RunLifecycleRepository,
+  sources: TestSources = {},
+) {
+  const ids = [...(sources.ids ?? ["profile-created", "commit-bootstrap-created"])];
   return createAppStore({
     catalog,
     repository,
-    clock: () => 1_700_000_000_500,
+    clock: () => sources.now ?? 1_700_000_000_500,
     createId: () => ids.shift() ?? "id-extra",
-    createSeed: () => "seed-created",
+    createSeed: () => sources.seed ?? "seed-created",
   });
 }
 
@@ -240,5 +250,417 @@ describe("createAppStore startup", () => {
     await expect(initialization).resolves.toBeUndefined();
     await expect(laterCommand).resolves.toBeUndefined();
     expect(store.getSnapshot().loadStatus).toBe("failed");
+  });
+});
+
+describe("createAppStore lifecycle commands", () => {
+  it("selects only known unlocked classes and leaves durable state untouched", async () => {
+    const profile = makeProfile();
+    const repository = repositoryFor({ profile, livingRun: null });
+    const store = createTestStore(repository);
+    await store.initialize();
+
+    const durableBefore = {
+      profile: store.getSnapshot().profile,
+      livingRun: store.getSnapshot().livingRun,
+    };
+    await store.dispatch({ type: "home/select-class", classId: NEON_MAGE });
+    expect(store.getSnapshot().selectedClassId).toBe(CIRCUIT_ROGUE);
+    await store.dispatch({
+      type: "home/select-class",
+      classId: "class-unknown" as ContentId,
+    });
+    expect(store.getSnapshot().selectedClassId).toBe(CIRCUIT_ROGUE);
+
+    await store.dispatch({
+      type: "home/select-class",
+      classId: GLITCH_KNIGHT,
+    });
+    expect(store.getSnapshot()).toMatchObject({
+      profile: durableBefore.profile,
+      livingRun: durableBefore.livingRun,
+      selectedClassId: GLITCH_KNIGHT,
+    });
+    expect(repository.startRun).not.toHaveBeenCalled();
+    expect(repository.abandonRun).not.toHaveBeenCalled();
+  });
+
+  it("opens the replacement guard on the first Start click without overwriting", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = repositoryFor({ profile, livingRun });
+    const store = createTestStore(repository);
+    await store.initialize();
+
+    await store.dispatch({ type: "run/request-start" });
+
+    expect(store.getSnapshot()).toMatchObject({
+      profile,
+      livingRun,
+      isReplacementGuardOpen: true,
+      isBusy: false,
+    });
+    expect(repository.startRun).not.toHaveBeenCalled();
+    expect(repository.abandonRun).not.toHaveBeenCalled();
+  });
+
+  it("persists a new run before publishing its durable snapshot", async () => {
+    const profile = makeProfile();
+    const pendingStart = deferred<PersistenceResult<RunState>>();
+    const startRun = vi.fn<RunLifecycleRepository["startRun"]>(
+      () => pendingStart.promise,
+    );
+    const repository = repositoryFor(
+      { profile, livingRun: null },
+      { startRun },
+    );
+    const store = createTestStore(repository, {
+      ids: ["run-new", "commit-start-new"],
+      seed: "seed-new",
+      now: 1_700_000_000_900,
+    });
+    await store.initialize();
+    const publishedRuns: Array<LivingRun | null> = [];
+    store.subscribe(() => publishedRuns.push(store.getSnapshot().livingRun));
+
+    const start = store.dispatch({ type: "run/request-start" });
+    await vi.waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+
+    expect(store.getSnapshot()).toMatchObject({
+      isBusy: true,
+      livingRun: null,
+      launchMode: "archive",
+    });
+    expect(publishedRuns.every((run) => run === null)).toBe(true);
+    const instruction = startRun.mock.calls[0]?.[0];
+    if (instruction === undefined) {
+      throw new Error("expected a start persistence instruction");
+    }
+    expect(instruction).toMatchObject({
+      kind: "start-run",
+      runId: "run-new",
+      commitId: "commit-start-new",
+      expectedProfileRevision: profile.revision,
+      proposedRun: {
+        runId: "run-new",
+        seed: "seed-new",
+        createdAt: 1_700_000_000_900,
+      },
+    });
+
+    pendingStart.resolve(
+      success({ profile, livingRun: instruction.proposedRun }),
+    );
+    await start;
+    expect(store.getSnapshot()).toMatchObject({
+      livingRun: instruction.proposedRun,
+      launchMode: "checkpoint",
+      isBusy: false,
+      saveSignal: {
+        tone: "saved",
+        message: "New Circuit Rogue run saved at Depth 1.",
+      },
+    });
+  });
+
+  it("keeps the prior durable state and reports a typed start rejection", async () => {
+    const profile = makeProfile();
+    const repository = repositoryFor(
+      { profile, livingRun: null },
+      {
+        startRun: vi.fn(async () =>
+          failure(
+            "stale-profile-revision",
+            "The profile changed before the run could start.",
+          ),
+        ),
+      },
+    );
+    const store = createTestStore(repository, {
+      ids: ["run-stale", "commit-stale"],
+    });
+    await store.initialize();
+
+    await store.dispatch({ type: "run/request-start" });
+
+    expect(store.getSnapshot()).toMatchObject({
+      profile,
+      livingRun: null,
+      launchMode: "archive",
+      isBusy: false,
+      saveSignal: {
+        tone: "rejected",
+        message:
+          "The new run was not saved. The profile changed before the run could start.",
+      },
+    });
+  });
+
+  it("suppresses duplicate rapid Start commands and class changes while busy", async () => {
+    const profile = makeProfile();
+    const pendingStart = deferred<PersistenceResult<RunState>>();
+    const startRun = vi.fn<RunLifecycleRepository["startRun"]>(
+      () => pendingStart.promise,
+    );
+    const repository = repositoryFor(
+      { profile, livingRun: null },
+      { startRun },
+    );
+    const store = createTestStore(repository, {
+      ids: ["run-one", "commit-one"],
+    });
+    await store.initialize();
+
+    const first = store.dispatch({ type: "run/request-start" });
+    const duplicate = store.dispatch({ type: "run/request-start" });
+    await vi.waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+    await store.dispatch({
+      type: "home/select-class",
+      classId: GLITCH_KNIGHT,
+    });
+
+    const instruction = startRun.mock.calls[0]?.[0];
+    if (instruction === undefined) {
+      throw new Error("expected a start persistence instruction");
+    }
+    pendingStart.resolve(
+      success({ profile, livingRun: instruction.proposedRun }),
+    );
+    await Promise.all([first, duplicate]);
+
+    expect(startRun).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().selectedClassId).toBe(CIRCUIT_ROGUE);
+  });
+
+  it("resumes exactly the restored class and depth with zero persistence writes", async () => {
+    const livingRun = makeLivingRun();
+    const repository = repositoryFor({
+      profile: makeProfile(),
+      livingRun,
+    });
+    const store = createTestStore(repository);
+    await store.initialize();
+    await store.dispatch({ type: "run/request-start" });
+
+    await store.dispatch({ type: "run/resume" });
+
+    expect(store.getSnapshot()).toMatchObject({
+      livingRun,
+      launchMode: "checkpoint",
+      isReplacementGuardOpen: false,
+      saveSignal: {
+        tone: "saved",
+        message: "Restored Glitch Knight at Depth 1.",
+      },
+    });
+    expect(repository.startRun).not.toHaveBeenCalled();
+    expect(repository.abandonRun).not.toHaveBeenCalled();
+  });
+
+  it("cancels replacement with zero writes and preserves selection and durable state", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = repositoryFor({ profile, livingRun });
+    const store = createTestStore(repository);
+    await store.initialize();
+    await store.dispatch({
+      type: "home/select-class",
+      classId: GLITCH_KNIGHT,
+    });
+    await store.dispatch({ type: "run/request-start" });
+
+    await store.dispatch({ type: "run/cancel-replacement" });
+
+    expect(store.getSnapshot()).toMatchObject({
+      profile,
+      livingRun,
+      selectedClassId: GLITCH_KNIGHT,
+      isReplacementGuardOpen: false,
+    });
+    expect(repository.startRun).not.toHaveBeenCalled();
+    expect(repository.abandonRun).not.toHaveBeenCalled();
+  });
+
+  it("returns to archive mode without changing the living run", async () => {
+    const livingRun = makeLivingRun();
+    const repository = repositoryFor({
+      profile: makeProfile(),
+      livingRun,
+    });
+    const store = createTestStore(repository);
+    await store.initialize();
+    await store.dispatch({ type: "run/resume" });
+
+    await store.dispatch({ type: "run/return-to-archive" });
+
+    expect(store.getSnapshot()).toMatchObject({
+      livingRun,
+      launchMode: "archive",
+    });
+    expect(repository.startRun).not.toHaveBeenCalled();
+    expect(repository.abandonRun).not.toHaveBeenCalled();
+  });
+
+  it("commits abandon, publishes no-run truth, then commits the replacement", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const noRunState: RunState = { profile, livingRun: null };
+    const pendingStart = deferred<PersistenceResult<RunState>>();
+    const abandonRun = vi.fn<RunLifecycleRepository["abandonRun"]>(async () =>
+      success(noRunState),
+    );
+    const startRun = vi.fn<RunLifecycleRepository["startRun"]>(
+      () => pendingStart.promise,
+    );
+    const repository = repositoryFor(
+      { profile, livingRun },
+      { abandonRun, startRun },
+    );
+    const store = createTestStore(repository, {
+      ids: ["commit-abandon", "run-replacement", "commit-replacement"],
+      seed: "seed-replacement",
+      now: 1_700_000_001_000,
+    });
+    await store.initialize();
+    await store.dispatch({ type: "run/request-start" });
+
+    const replacement = store.dispatch({
+      type: "run/confirm-abandon-and-start",
+    });
+    await vi.waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+
+    expect(abandonRun).toHaveBeenCalledWith({
+      kind: "abandon-run",
+      runId: livingRun.runId,
+      expectedRevision: livingRun.revision,
+      commitId: "commit-abandon",
+    });
+    expect(abandonRun.mock.invocationCallOrder[0]).toBeLessThan(
+      startRun.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(store.getSnapshot()).toMatchObject({
+      livingRun: null,
+      selectedClassId: CIRCUIT_ROGUE,
+      launchMode: "archive",
+      isReplacementGuardOpen: false,
+      isBusy: true,
+      saveSignal: { tone: "saved" },
+    });
+
+    const startInstruction = startRun.mock.calls[0]?.[0];
+    if (startInstruction === undefined) {
+      throw new Error("expected replacement start instruction");
+    }
+    expect(startInstruction).toMatchObject({
+      kind: "start-run",
+      runId: "run-replacement",
+      commitId: "commit-replacement",
+      proposedRun: {
+        classId: CIRCUIT_ROGUE,
+        seed: "seed-replacement",
+      },
+    });
+    pendingStart.resolve(
+      success({ profile, livingRun: startInstruction.proposedRun }),
+    );
+    await replacement;
+
+    expect(store.getSnapshot()).toMatchObject({
+      livingRun: startInstruction.proposedRun,
+      launchMode: "checkpoint",
+      isReplacementGuardOpen: false,
+      isBusy: false,
+      saveSignal: {
+        tone: "saved",
+        message: "Replacement Circuit Rogue run saved at Depth 1.",
+      },
+    });
+  });
+
+  it("keeps the old run when abandon persistence fails", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = repositoryFor(
+      { profile, livingRun },
+      {
+        abandonRun: vi.fn(async () =>
+          failure(
+            "stale-run-revision",
+            "The living run changed before it could be abandoned.",
+          ),
+        ),
+      },
+    );
+    const store = createTestStore(repository, { ids: ["commit-abandon"] });
+    await store.initialize();
+    await store.dispatch({ type: "run/request-start" });
+
+    await store.dispatch({ type: "run/confirm-abandon-and-start" });
+
+    expect(store.getSnapshot()).toMatchObject({
+      profile,
+      livingRun,
+      isBusy: false,
+      saveSignal: {
+        tone: "rejected",
+        message:
+          "The living run was not abandoned. The living run changed before it could be abandoned.",
+      },
+    });
+    expect(repository.startRun).not.toHaveBeenCalled();
+  });
+
+  it("never resurrects an abandoned run when replacement creation fails", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = repositoryFor(
+      { profile, livingRun },
+      {
+        abandonRun: vi.fn(async () => success({ profile, livingRun: null })),
+        startRun: vi.fn(async () =>
+          failure("transaction-failed", "The local save transaction failed."),
+        ),
+      },
+    );
+    const store = createTestStore(repository, {
+      ids: ["commit-abandon", "run-replacement", "commit-replacement"],
+    });
+    await store.initialize();
+    await store.dispatch({ type: "run/request-start" });
+
+    await store.dispatch({ type: "run/confirm-abandon-and-start" });
+
+    expect(store.getSnapshot()).toMatchObject({
+      profile,
+      livingRun: null,
+      selectedClassId: CIRCUIT_ROGUE,
+      launchMode: "archive",
+      isReplacementGuardOpen: false,
+      isBusy: false,
+      saveSignal: {
+        tone: "warning",
+        message:
+          "The previous run was abandoned, but the replacement run could not be started. The local save transaction failed.",
+      },
+    });
+  });
+
+  it("rejects an unguarded replacement without any persistence write", async () => {
+    const livingRun = makeLivingRun();
+    const repository = repositoryFor({
+      profile: makeProfile(),
+      livingRun,
+    });
+    const store = createTestStore(repository);
+    await store.initialize();
+
+    await store.dispatch({ type: "run/confirm-abandon-and-start" });
+
+    expect(repository.abandonRun).not.toHaveBeenCalled();
+    expect(repository.startRun).not.toHaveBeenCalled();
+    expect(store.getSnapshot()).toMatchObject({
+      livingRun,
+      saveSignal: { tone: "rejected" },
+    });
   });
 });
