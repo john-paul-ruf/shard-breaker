@@ -1,0 +1,63 @@
+/*
+ * SHARDBREAK design tokens — the single source of truth for palette, type,
+ * spacing, structure, and effect values from the Genesis design spec
+ * (program/shardbreak/specs/design.md). Screen and component modules consume
+ * these custom properties instead of copying literals. Bright signal colors
+ * communicate action, danger, selection, and meta state; quiet surfaces carry
+ * density. Color is never the only state signal in the consuming CSS.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces and text (neon-glitch tactical field). */
+  --color-ink: #070a12;
+  --color-panel: #0e1523;
+  --color-raised: #141e30;
+  --color-active: #1b2940;
+  --color-text-primary: #f4f7ff;
+  --color-text-secondary: #a8b6cc;
+  --color-text-tertiary: #6f809b;
+
+  /* Signal colors. Each has a reserved meaning and is never decorative. */
+  --color-signal-cyan: #54f6d1;
+  --color-signal-magenta: #fb3fb6;
+  --color-signal-amber: #ffc857;
+  --color-signal-danger: #ff5e71;
+  --color-signal-violet: #8d7cff;
+
+  /* Structure: translucent rules, radii, and layout dimensions. */
+  --line-translucent: rgb(168 182 204 / 20%);
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --radius-shell: 14px;
+  --size-action-target: 44px;
+  --size-status-bar-desktop: 64px;
+  --size-status-bar-phone: 56px;
+  --space-gutter-phone: 16px;
+  --space-gutter-desktop: 24px;
+  --layout-max-width: 1440px;
+
+  /* 4px spacing scale (4, 8, 12, 16, 24, 32, 48). */
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+
+  /* Effects: restrained colored glows reserved to their signal meaning. */
+  --glow-cyan: 0 0 24px rgb(84 246 209 / 20%);
+  --glow-magenta: 0 0 24px rgb(251 63 182 / 18%);
+  --glow-danger: 0 0 24px rgb(255 94 113 / 20%);
+
+  /* Focus treatment: a 2px cyan outline held 2px off the control. */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --focus-ring-color: var(--color-signal-cyan);
+
+  /* System type stacks: condensed display sans and telemetry monospace. */
+  --font-display: "Arial Narrow", "Inter", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+}

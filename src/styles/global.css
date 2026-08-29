@@ -1,0 +1,274 @@
+/* stylelint-disable selector-class-pattern -- The SESSION-03 artifact contract
+   mandates BEM __element / --modifier class names (e.g. action-button--primary,
+   integrity-meter__pip). stylelint-config-standard's kebab-only
+   selector-class-pattern cannot express them, and the stylelint config lives in
+   package.json, outside this session's lease. */
+
+/*
+ * SHARDBREAK base layer — reset, the neon-glitch field, semantic surfaces,
+ * buttons, status primitives, and focus. Reusable, state-driven class names
+ * are the public contract consumed by the screen and component modules; state
+ * is expressed through modifiers and data/aria attributes, never color alone.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--color-ink);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--color-text-primary);
+  font-family: var(--font-display);
+  background-color: var(--color-ink);
+  background-image:
+    linear-gradient(rgb(84 246 209 / 2.5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(84 246 209 / 2.5%) 1px, transparent 1px),
+    radial-gradient(circle at 72% 8%, rgb(251 63 182 / 12%), transparent 27rem),
+    radial-gradient(circle at 6% 80%, rgb(84 246 209 / 7%), transparent 24rem);
+  background-size: 32px 32px, 32px 32px, auto, auto;
+}
+
+/* Static scanline overlay: decorative, pointer-transparent, and never above
+   dialog or live-region content. */
+body::after {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  content: "";
+  background: repeating-linear-gradient(0deg, transparent 0 3px, #fff 4px);
+  mix-blend-mode: overlay;
+  opacity: 0.045;
+  pointer-events: none;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* Visible focus for every interactive control: a 2px cyan outline held off the
+   control. Outlines are never globally suppressed. */
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Shell and status bar. */
+.app-shell {
+  width: min(var(--layout-max-width), 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+}
+
+.app-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--size-status-bar-desktop);
+  padding: 0 var(--space-gutter-desktop);
+  border-bottom: 1px solid var(--line-translucent);
+  background: rgb(7 10 18 / 82%);
+}
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-weight: 900;
+  font-size: 15px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.resource-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--space-32);
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-control);
+  color: var(--color-signal-amber);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+/* Major panel surface: 1px translucent border and the tactical raised fill. */
+.surface-panel {
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-card);
+  background: var(--color-panel);
+}
+
+/* Monospace eyebrow above a heading; tone follows a data attribute so it is
+   never color-only. */
+.signal-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--color-signal-cyan);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.signal-eyebrow[data-tone="warning"] {
+  color: var(--color-signal-amber);
+}
+
+.signal-eyebrow[data-tone="danger"] {
+  color: var(--color-signal-danger);
+}
+
+.signal-eyebrow[data-tone="success"] {
+  color: var(--color-signal-cyan);
+}
+
+/* Action buttons. Every actionable control clears the 44px target. */
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  min-width: var(--size-action-target);
+  min-height: var(--size-action-target);
+  padding: 0 var(--space-16);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.action-button--primary {
+  border-color: var(--color-signal-cyan);
+  background: var(--color-signal-cyan);
+  color: #061111;
+}
+
+.action-button--quiet {
+  border-color: var(--line-translucent);
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.action-button--danger {
+  border-color: var(--color-signal-danger);
+  background: var(--color-signal-danger);
+  color: #21070d;
+}
+
+.action-button:hover {
+  box-shadow: var(--glow-cyan);
+}
+
+.action-button--danger:hover {
+  box-shadow: var(--glow-danger);
+}
+
+/* Disabled controls stay legible and signal state through more than opacity:
+   the fill flattens and the pointer is blocked. */
+.action-button:disabled,
+.action-button[aria-disabled="true"] {
+  border-color: var(--line-translucent);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  box-shadow: none;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Integrity meter: hollow pips fill in — shape, not only color, carries the
+   reading — paired with current / maximum text by the consuming component. */
+.integrity-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.integrity-meter__pip {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--color-signal-cyan);
+  background: transparent;
+}
+
+.integrity-meter__pip[data-filled="true"] {
+  background: var(--color-signal-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.integrity-meter[data-critical="true"] .integrity-meter__pip[data-filled="true"] {
+  border-color: var(--color-signal-danger);
+  background: var(--color-signal-danger);
+  box-shadow: var(--glow-danger);
+}
+
+/* Save signal: a non-blocking persistence toast. The data-tone attribute plus a
+   left border and label carry meaning; color is a reinforcement, not the sole
+   signal. */
+.save-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--space-32);
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--line-translucent);
+  border-left: 3px solid var(--color-text-tertiary);
+  border-radius: var(--radius-control);
+  background: var(--color-raised);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.save-signal[data-tone="saved"] {
+  border-left-color: var(--color-signal-cyan);
+  color: var(--color-signal-cyan);
+}
+
+.save-signal[data-tone="warning"] {
+  border-left-color: var(--color-signal-amber);
+  color: var(--color-signal-amber);
+}
+
+.save-signal[data-tone="rejected"] {
+  border-left-color: var(--color-signal-danger);
+  color: var(--color-signal-danger);
+}
