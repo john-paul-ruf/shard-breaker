@@ -63,4 +63,24 @@
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Imported Genesis M07 and database contracts into the Forge registry. |
+| 2026-08-29 | Added the run-lifecycle repository, v1 envelope validation, and migration-backed database opening. |
 
+<!-- SESSION-04 -->
+## Run-lifecycle foundation API
+
+- `envelopes.ts` defines `ShardbreakDatabaseSchema`, `ShardbreakDatabase`,
+  `ProfileEnvelope`, `LivingRunEnvelope`, `SaveRevision`,
+  `PersistenceResult<T>`, `PersistenceError`, the start/abandon persistence
+  instructions, and `RunLifecycleRepository`.
+- `database.ts` exports `DatabaseOpenOptions` and `openDatabase(options?)`. The
+  production default opens `shardbreak` version 1; tests may inject a unique
+  name and `IDBFactory`. Migration 001 remains the sole schema creator.
+- `validation.ts` exports strict, cloning parsers for profiles, living runs,
+  and combined state: `parseProfileRecord()`, `parseLivingRunRecord()`, and
+  `parseRunStateRecords()`.
+- `repositories.ts` exports `createRunLifecycleRepository(database, catalog)`
+  with `bootstrapProfile()`, `loadState()`, `startRun()`, and `abandonRun()`.
+  Start checks both singleton stores and writes within one transaction;
+  abandon verifies the current run identity/revision and deletes it within one
+  transaction. Transfer, reset, checkpoint, and terminal-finalization APIs
+  remain deferred.
