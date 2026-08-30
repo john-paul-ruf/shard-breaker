@@ -23,7 +23,7 @@
 | 04 | Persist Profile Bootstrap and Living-Run Leases | M07 | `./src/persistence/database.ts`, `./src/persistence/envelopes.ts`, `./src/persistence/validation.ts`, `./src/persistence/validation.test.ts`, `./src/persistence/repositories.ts`, `./src/persistence/repositories.test.ts` | done | 3 | 2026-08-29 | Strict cloning v1 validators, migration-backed database opening, fail-closed bootstrap/load, atomic one-run start, and explicit abandon are complete with stable typed errors. Fake IndexedDB persistence tests pass 43/43; the full unit suite passes 120/120 and `npm run verify` exits 0. |
 | 05 | Build the Accessible Launch Archive | M08, M09 | `./src/ui/components/AppStatusBar.tsx`, `./src/ui/components/IntegrityMeter.tsx`, `./src/ui/components/ConfirmationDialog.tsx`, `./src/ui/components/SaveSignal.tsx`, `./src/ui/components/lifecycleComponents.test.tsx`, `./src/ui/screens/HomeScreen.tsx`, `./src/ui/screens/HomeScreen.test.tsx` | done | 3 | 2026-08-29 | Controlled M08/M09 launch archive complete: local status, bounded Integrity, focus-contained overwrite guard, durable save feedback, safe class/start/resume intents, and restored-checkpoint mode. Targeted component/screen tests pass 32/32; full unit suite passes 130/130 and `npm run verify` exits 0. |
 | 06 | Integrate the Durable Application Store | M01 | `./index.html`, `./src/main.tsx`, `./src/app/App.tsx`, `./src/app/App.test.tsx`, `./src/app/appStore.ts`, `./src/app/appStore.test.ts`, `./src/app/navigation.ts` | pending | — | — | — |
-| 07 | Prove the Browser Flow and Ship Static Delivery | M12, M13 | `./playwright.config.ts`, `./tests/e2e/indexedDb.ts`, `./tests/e2e/run-lifecycle.spec.ts`, `./.github/workflows/deploy.yml` | pending | — | — | — |
+| 07 | Prove the Browser Flow and Ship Static Delivery | M12, M13 | `./playwright.config.ts`, `./tests/e2e/indexedDb.ts`, `./tests/e2e/run-lifecycle.spec.ts`, `./.github/workflows/deploy.yml` | done | 2 | 2026-08-29 | Assigned-port Playwright harness, bounded IndexedDB read/delete helpers, nine lifecycle flows across Chromium/Firefox/WebKit/mobile (36/36), and the guarded Node 22 GitHub Pages pipeline are complete. Local verification used port 4174; YAML and repository-prefixed `/shard-breaker/` output passed. |
 
 Statuses: `pending` | `in-progress` | `done` | `blocked` | `skipped`  
 Checkpoint is the last committed checkpoint number, or `—`.
@@ -161,3 +161,22 @@ flowchart TD
   Integrity, boss count, and saved status inside the launch archive; it renders
   no route, room, reward, or placeholder. The mock-only Profile/accessibility
   links are intentionally omitted; there are no other design deviations.
+
+### SESSION-07
+
+- **Notes:** M13 now proves default-profile bootstrap, exact class Integrity and
+  lock rules, committed start, refresh/resume without a write, all three guard
+  choices, explicit replacement, duplicate suppression, keyboard/focus/live
+  feedback, 320px/portrait geometry, and reduced motion. All nine flows pass in
+  each of the four configured projects (36/36), with no console/page errors or
+  non-local runtime requests. M12 adds range-checked assigned-port serving and a
+  Node 22 Pages workflow that verifies, runs Chromium, builds with the repository
+  prefix, uploads only `./dist/`, and deploys through the `github-pages`
+  environment.
+- **Follow-up:** Local verification used `PLAYWRIGHT_PORT=4174` because the
+  solo fallback `4173` was already occupied by an unrelated local project; the
+  Playwright server stopped cleanly. WebKit acceptance uses its macOS
+  `Option+Tab` convention while the other projects use `Tab`. The
+  `/shard-breaker/` build emits only prefixed local JS/CSS references. Rollup
+  reports non-failing annotation warnings from bundled Zod source; no
+  outside-lease application defect was found.
