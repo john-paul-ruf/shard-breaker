@@ -59,5 +59,23 @@ A session owns only the exact subset it creates or modifies. Never emit
 
 | Date | Change |
 |------|--------|
+| 2026-08-29 | Added the assigned-port Playwright harness and guarded GitHub Pages delivery workflow. |
 | 2026-08-29 | Added a precise non-Genesis ownership boundary for the empty repository's required toolchain and delivery files. |
 
+<!-- SESSION-07 -->
+## Browser and static-delivery contract
+
+- `./playwright.config.ts` reads `PLAYWRIGHT_PORT`, then `PORT`, validates the
+  value within `1..65535`, and uses `4173` only as the solo fallback. The one
+  value drives the strict-port Vite command and default local base URL; an
+  optional `PLAYWRIGHT_BASE_URL` may override the URL, and an explicit assigned
+  port disables server reuse.
+- The default project matrix is desktop Chromium, Firefox, WebKit, and a
+  portrait mobile Chromium device. Traces, screenshots, videos, and HTML
+  reports remain under ignored test-output paths and are retained only for
+  failures.
+- `./.github/workflows/deploy.yml` gates pushes to `main` and manual releases
+  through `npm ci`, the full verification gate, Chromium acceptance, and a
+  repository-name-derived `VITE_BASE_PATH` build. Only `./dist/` becomes the
+  official Pages artifact; the dependent `github-pages` environment job owns
+  deployment.
