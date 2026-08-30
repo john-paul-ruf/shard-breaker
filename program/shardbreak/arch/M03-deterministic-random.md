@@ -53,4 +53,34 @@
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Imported Genesis M03 contract into the Forge registry. |
+| 2026-08-30 | Added v1 named streams plus deterministic route, threat, Shop, Recovery, room, and boss-routing candidates. |
 
+<!-- deterministic-routes-and-utility-rooms SESSION-01 -->
+## Implemented Public API and Compatibility Contract
+
+- `seededRng.ts` exports `EventKey`, `SeededRng`, and
+  `deriveStream(seed, contentVersion, eventKey)`. `SeededRng` exposes
+  `nextUint32`, `nextFloat`, rejection-sampled `nextInt`, `pick`, and immutable
+  `shuffle` operations.
+- Stream state uses the `shardbreak-rng-v1` marker and FNV-1a over four
+  length-prefixed UTF-16 byte sequences (marker, seed, content version, event
+  key), followed by Mulberry32 unsigned 32-bit transitions. `nextInt` accepts
+  positive safe bounds through `2^32`; ASCII and Unicode golden vectors pin
+  this behavior. Every derived stream owns its cursor in a closure.
+- `generators.ts` exports `RouteGenerationContext`, `GeneratedRouteOffer`,
+  `generateRouteOptions`, `ThreatGenerationContext`,
+  `GeneratedThreatProfile`, `generateThreatProfile`,
+  `ShopGenerationContext`, `GeneratedShopItem`, `generateShopInventory`,
+  `RoomGenerationContext`, `GeneratedRoomCandidate`, and
+  `generateRoomCandidate`, plus `THREAT_LIMITS` and `SHOP_PRICE_CAP`.
+- Non-boss routes contain exactly four offers in Battle, Elite, Shop,
+  Recovery order. Every positive multiple of three contains one available
+  Boss offer only. Room candidates carry inert `ready` projections; the Boss
+  projection uses the stable `routing` arrival phase and no modifiers.
+- Threat policy uses log2 depth/cycle factors capped at budget 72, durability
+  factor 4, density 12, and two hazards. Utility threat is zero budget,
+  durability factor 1, and zero density. Shop prices are materialized from
+  base price plus bounded seeded depth/cycle variation and cap at 96.
+- Every seeded selection starts from a stable authored-ID sort. Exported
+  candidate arrays and nested mutable-looking projections are frozen or
+  defensively copied. M03 imports M02 only and never imports run state.

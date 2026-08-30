@@ -32,7 +32,7 @@
 | `./src/domain/content/skills.ts` | Six to eight active skills and room charges |
 | `./src/domain/content/equipment.ts` | Six to eight passive run items |
 | `./src/domain/content/enemies.ts` | Ordinary enemy behaviors and formations |
-| `./src/domain/content/bosses.ts` | Four archetypes, phases, telegraphs, compatible modifiers |
+| `./src/domain/content/bosses.ts` | Four stable routing identities; combat phases, telegraphs, and modifiers remain deferred |
 | `./src/domain/content/rooms.ts` | Battle, elite, shop, recovery, and boss metadata |
 | `./src/domain/content/enhancements.ts` | Ten to fifteen modifiers, depth gates, compatibility |
 | `./src/domain/content/relics.ts` | Bounded carry-over relic definitions |
@@ -63,6 +63,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Imported Genesis M02 contract into the Forge registry. |
+| 2026-08-30 | Added `content-1` route rooms, support IDs, bounded Integrity services, boss routing identities, and total catalog lookups. |
 
 <!-- SESSION-02 -->
 ## M02 — Authored content catalog (`./src/domain/content/`)
@@ -78,3 +79,27 @@
   IDs at construction — no runtime content service).
 - Class availability: Circuit Rogue (3) and Glitch Knight (4) are `initial`; Neon Mage
   (2) is `locked` (defined and visible, but not in the initial unlock projection).
+
+<!-- deterministic-routes-and-utility-rooms SESSION-01 -->
+## Route and Utility Catalog API
+
+- `rooms.ts` exports `RoomType`, `RoomDefinition`, `RouteSupportKind`,
+  `RouteSupportDefinition`, `ShopServiceEffect`, `ShopServiceDefinition`,
+  `RECOVERY_RESTORE_AMOUNT`, and frozen `ROOM_DEFINITIONS`,
+  `ROUTE_SUPPORT_DEFINITIONS`, and `SHOP_SERVICE_DEFINITIONS` arrays.
+- The five room IDs are `room-battle-glassway`,
+  `room-elite-overclock-pit`, `room-shop-patchbay`,
+  `room-recovery-soft-reset`, and `room-boss-mandatory`, in stable Battle,
+  Elite, Shop, Recovery, Boss order.
+- Shop service IDs are `shop-service-integrity-patch` (base price 20,
+  restore 1) and `shop-service-integrity-overhaul` (base price 36, restore 2).
+  Recovery restores exactly 1.
+- `bosses.ts` exports `BossRoutingIdentity` and frozen
+  `BOSS_ROUTING_IDENTITIES` for `boss-warden`, `boss-broodmother`,
+  `boss-null-architect`, and `boss-leech`. These are identity/counterplay data
+  only; no boss combat rules are present.
+- `ContentCatalog` adds `listRooms()`/`getRoom(id)`,
+  `listShopServices()`/`getShopService(id)`, `listBosses()`/`getBoss(id)`, and
+  `hasContent(id)`. Construction rejects invalid/duplicate global IDs and
+  missing or wrong-kind room cross-references; total lookups retain
+  `ContentLookupResult<T>`.
