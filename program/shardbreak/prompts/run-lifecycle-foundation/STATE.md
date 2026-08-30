@@ -22,7 +22,7 @@
 | 03 | Establish the Launch Archive Design System | M10 | `./src/styles/tokens.css`, `./src/styles/global.css`, `./src/styles/responsive.css` | done | 2 | 2026-08-29 | M10 launch-archive design system: tokens.css (Genesis palette, 4px scale, structure, glows, focus, type stacks), global.css (reset, neon-glitch field, semantic buttons/status/integrity/save primitives, launch archive + class selector + danger overwrite guard), responsive.css (>=1024 base, <=1023 single-column urgency order, <=720 phone, reduced-motion). All state paired with attribute/shape/text, never color-only. npm run verify exits 0. Follow-up: SESSION-05 consumer notes (also in arch fragment): (1) mount .confirmation-backdrop only while the guard is active — it has no built-in open/closed toggle class; (2) place .living-run-strip before .class-selector inside .launch-panel so phone/tablet urgency order holds; (3) supply visible SELECTED and LOCKED text on .class-card — CSS reinforces with border/shape/aria but does not inject label text; (4) .class-card expects 3 grid columns (icon / name+note / integrity) and .run-loop-steps styles its direct children as cells. Only action-button --primary/--quiet/--danger modifiers exist (no magenta variant); the mock's pink Start-new-run maps to --primary, danger to the abandon guard. |
 | 04 | Persist Profile Bootstrap and Living-Run Leases | M07 | `./src/persistence/database.ts`, `./src/persistence/envelopes.ts`, `./src/persistence/validation.ts`, `./src/persistence/validation.test.ts`, `./src/persistence/repositories.ts`, `./src/persistence/repositories.test.ts` | done | 3 | 2026-08-29 | Strict cloning v1 validators, migration-backed database opening, fail-closed bootstrap/load, atomic one-run start, and explicit abandon are complete with stable typed errors. Fake IndexedDB persistence tests pass 43/43; the full unit suite passes 120/120 and `npm run verify` exits 0. |
 | 05 | Build the Accessible Launch Archive | M08, M09 | `./src/ui/components/AppStatusBar.tsx`, `./src/ui/components/IntegrityMeter.tsx`, `./src/ui/components/ConfirmationDialog.tsx`, `./src/ui/components/SaveSignal.tsx`, `./src/ui/components/lifecycleComponents.test.tsx`, `./src/ui/screens/HomeScreen.tsx`, `./src/ui/screens/HomeScreen.test.tsx` | done | 3 | 2026-08-29 | Controlled M08/M09 launch archive complete: local status, bounded Integrity, focus-contained overwrite guard, durable save feedback, safe class/start/resume intents, and restored-checkpoint mode. Targeted component/screen tests pass 32/32; full unit suite passes 130/130 and `npm run verify` exits 0. |
-| 06 | Integrate the Durable Application Store | M01 | `./index.html`, `./src/main.tsx`, `./src/app/App.tsx`, `./src/app/App.test.tsx`, `./src/app/appStore.ts`, `./src/app/appStore.test.ts`, `./src/app/navigation.ts` | pending | — | — | — |
+| 06 | Integrate the Durable Application Store | M01 | `./index.html`, `./src/main.tsx`, `./src/app/App.tsx`, `./src/app/App.test.tsx`, `./src/app/appStore.ts`, `./src/app/appStore.test.ts`, `./src/app/navigation.ts` | done | 4 | 2026-08-29 | M01 now serializes startup and lifecycle commands, publishes durable state only after M07 commits, preserves explicit no-overwrite and partial-failure truth, derives archive/checkpoint navigation, binds React through `useSyncExternalStore`, and composes the capability-checked cryptographic browser entry. Targeted App/store tests pass 26/26; the full unit suite passes 156/156; all 36 browser flows pass; root and `/shard-breaker/` production builds emit correctly prefixed local assets. |
 | 07 | Prove the Browser Flow and Ship Static Delivery | M12, M13 | `./playwright.config.ts`, `./tests/e2e/indexedDb.ts`, `./tests/e2e/run-lifecycle.spec.ts`, `./.github/workflows/deploy.yml` | done | 2 | 2026-08-29 | Assigned-port Playwright harness, bounded IndexedDB read/delete helpers, nine lifecycle flows across Chromium/Firefox/WebKit/mobile (36/36), and the guarded Node 22 GitHub Pages pipeline are complete. Local verification used port 4174; YAML and repository-prefixed `/shard-breaker/` output passed. |
 
 Statuses: `pending` | `in-progress` | `done` | `blocked` | `skipped`  
@@ -161,6 +161,24 @@ flowchart TD
   Integrity, boss count, and saved status inside the launch archive; it renders
   no route, room, reward, or placeholder. The mock-only Profile/accessibility
   links are intentionally omitted; there are no other design deviations.
+
+### SESSION-06
+
+- **Notes:** M01 exposes the stable external-store contracts (`AppState`,
+  `AppStore`, `AppStoreDependencies`, `LoadStatus`, `LaunchMode`, and
+  `SaveSignalView`), `createAppStore()`, pure `deriveScreen()`, and the React
+  `App` composition. Initialization bootstraps only an absent profile; lifecycle
+  intents are serialized; Start and confirmed replacement publish speculative
+  domain state only after repository success; Resume/Cancel/Return remain
+  write-free; a failed replacement after committed abandonment truthfully leaves
+  the archive with no living run.
+- **Follow-up:** Refresh deliberately initializes in archive mode even when a
+  living run exists. Future command families must extend the exhaustive M01
+  switch and preserve persist-before-publish ordering. The browser entry requires
+  IndexedDB plus `crypto.randomUUID()`/`crypto.getRandomValues()` and renders a
+  bounded unsupported state when a capability or mount point is missing. Root
+  and `/shard-breaker/` builds contain only Vite-transformed local assets; Rollup
+  emits non-failing third-party Zod annotation warnings.
 
 ### SESSION-07
 
