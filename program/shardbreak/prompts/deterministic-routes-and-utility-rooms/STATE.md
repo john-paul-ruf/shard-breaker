@@ -27,7 +27,7 @@
 
 | # | Session | Modules | Owns | Status | Checkpoint | Completed | Notes |
 |---|---------|---------|------|--------|------------|-----------|-------|
-| 01 | Author Seeded Route and Utility Generation | M02, M03 | `./src/domain/content/catalog.ts`, `./src/domain/content/catalog.test.ts`, `./src/domain/content/rooms.ts`, `./src/domain/content/rooms.test.ts`, `./src/domain/content/bosses.ts`, `./src/domain/random/seededRng.ts`, `./src/domain/random/seededRng.test.ts`, `./src/domain/random/generators.ts`, `./src/domain/random/generators.test.ts` | blocked | — | 2026-08-30 | no handoff JSON; see `./.forge/results/SESSION-01.result.md` |
+| 01 | Author Seeded Route and Utility Generation | M02, M03 | `./src/domain/content/catalog.ts`, `./src/domain/content/catalog.test.ts`, `./src/domain/content/rooms.ts`, `./src/domain/content/rooms.test.ts`, `./src/domain/content/bosses.ts`, `./src/domain/random/seededRng.ts`, `./src/domain/random/seededRng.test.ts`, `./src/domain/random/generators.ts`, `./src/domain/random/generators.test.ts` | done | 3 | 2026-08-30 | Added immutable route/utility content, v1 named RNG streams, and bounded deterministic route/room candidates; 185 tests and full verify pass. |
 | 02 | Commit Routes and Resolve Utility Rooms | M05 | `./src/domain/run/model.ts`, `./src/domain/run/routes.ts`, `./src/domain/run/commands.ts`, `./src/domain/run/validation.ts`, `./src/domain/run/reducer.ts`, `./src/domain/run/routeUtility.test.ts` | pending | — | — | — |
 | 03 | Persist Route and Utility Checkpoints Atomically | M07 | `./src/persistence/envelopes.ts`, `./src/persistence/validation.ts`, `./src/persistence/validation.test.ts`, `./src/persistence/repositories.ts`, `./src/persistence/repositories.test.ts` | pending | — | — | — |
 | 04 | Extend the Tactical Route Presentation | M10 | `./src/styles/global.css`, `./src/styles/responsive.css` | pending | — | — | — |
@@ -129,7 +129,44 @@ flowchart TD
 
 ## Handoff Notes
 
-### SESSION-01 — blocked 2026-08-30
+### SESSION-01 — done 2026-08-30
 
-- **Checkpoint:** 0/3
-- **Reason:** no handoff JSON; see `./.forge/results/SESSION-01.result.md`
+- **Checkpoint:** 3/3
+- **Authored IDs:** Rooms `room-battle-glassway`,
+  `room-elite-overclock-pit`, `room-shop-patchbay`,
+  `room-recovery-soft-reset`, and `room-boss-mandatory`; Shop services
+  `shop-service-integrity-patch` and `shop-service-integrity-overhaul`; bosses
+  `boss-warden`, `boss-broodmother`, `boss-null-architect`, and `boss-leech`.
+  Route support adds four formation IDs, five objective IDs, two hazard IDs,
+  and five reward-preview IDs, all globally unique and resolved by `content-1`.
+- **M02 API:** `RoomType`, `RoomDefinition`, route-support definitions,
+  `ShopServiceDefinition`, `BossRoutingIdentity`, `RECOVERY_RESTORE_AMOUNT`,
+  and frozen authored arrays. `ContentCatalog` retains every class method and
+  adds `listRooms`/`getRoom`, `listShopServices`/`getShopService`,
+  `listBosses`/`getBoss`, and generic `hasContent` total coverage.
+- **M03 API:** `deriveStream(seed, contentVersion, eventKey)` returns a frozen
+  `SeededRng`; `generateRouteOptions`, `generateThreatProfile`,
+  `generateShopInventory`, and `generateRoomCandidate` return frozen readonly
+  candidate projections with generator-owned contexts and no M05 import.
+- **RNG contract:** `shardbreak-rng-v1` plus seed, content version, and event
+  key are length-prefixed and FNV-1a hashed as UTF-16 bytes into Mulberry32.
+  Unsigned 32-bit draws and rejection-sampled `nextInt` (maximum exclusive
+  bound `2^32`) are pinned by ASCII and Unicode golden vectors. Streams have
+  closure-local cursors only.
+- **Route/threat contract:** Every non-boss depth yields Battle, Elite, Shop,
+  Recovery in that exact four-card order; every positive multiple of three
+  yields one available Boss card only. Threat uses capped log2 depth/cycle
+  factors: budget `<= 72`, durability factor `<= 4`, density `<= 12`, and at
+  most two hazards. Shop/Recovery threat is `0 / 1 / 0` respectively for
+  budget/durability/density.
+- **Balance content:** Integrity Patch costs 20 and restores 1; Integrity
+  Overhaul costs 36 and restores 2. Seeded depth/cycle price surcharges cap
+  final Shop prices at 96. Soft Reset restores exactly 1. These are authored
+  content/generator policy, not save-schema semantics.
+- **Verification:** Targeted catalog/RNG/generator run: 4 files, 37 tests pass.
+  Full unit run: 11 files, 185 tests pass. Lint, typecheck, production build,
+  and `npm run verify` exit 0; M03 dependency/no-random greps and immutable
+  migration diff checks pass.
+- **Follow-up:** SESSION-02 can pass a persisted `selectedOfferId` with the
+  committed route context to `generateRoomCandidate`; Boss candidates carry
+  only the stable `routing` arrival phase and no combat modifiers.
