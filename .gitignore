@@ -34,3 +34,4 @@ yarn-error.log*
 /.program/
 /program/
 /prompts
+/PROGRAM-CONFIG.md
