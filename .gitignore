@@ -13,7 +13,6 @@ yarn-error.log*
 /.idea/
 /.idea/
 /.zencoder/
-/prompts
 
 # Jikijitsu orchestration scratch
 /.forge/
@@ -33,3 +32,5 @@ yarn-error.log*
 /DESIGNER.md
 /SPEC.md
 /.program/
+/program/
+/prompts
