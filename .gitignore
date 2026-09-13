@@ -11,10 +11,9 @@ yarn-error.log*
 
 .vscode/*
 /.idea/
-/program/
 /.idea/
 /.zencoder/
-/program/
+/prompts
 
 # Jikijitsu orchestration scratch
 /.forge/
@@ -33,3 +32,4 @@ yarn-error.log*
 /DB.md
 /DESIGNER.md
 /SPEC.md
+/.program/
