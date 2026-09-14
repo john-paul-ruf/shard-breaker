@@ -104,6 +104,16 @@ function runRejectionMessage(error: RunRejection): string {
       return "The run identity could not be created safely. No saved data was changed.";
     case "invalid-state":
       return "The current archive state is invalid. No saved data was changed.";
+    case "route-already-materialized":
+      return "Route offers are already materialized and cannot be rerolled.";
+    case "route-not-materialized":
+      return "No route offers have been materialized yet.";
+    case "route-already-committed":
+      return "The route has already been committed to a room.";
+    case "unknown-route-offer":
+      return "The selected route offer is not part of the current route.";
+    case "route-selection-missing":
+      return "Select a route offer before committing to a room.";
   }
 }
 
