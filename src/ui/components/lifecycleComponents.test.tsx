@@ -6,7 +6,11 @@ import userEvent from "@testing-library/user-event";
 import { AppStatusBar } from "./AppStatusBar";
 import { ConfirmationDialog } from "./ConfirmationDialog";
 import { IntegrityMeter } from "./IntegrityMeter";
+import { RouteCard } from "./RouteCard";
 import { SaveSignal } from "./SaveSignal";
+import type { RoomDefinition } from "../../domain/content/rooms";
+import type { RouteOfferSnapshot } from "../../domain/run/model";
+import { createContentCatalog } from "../../domain/content/catalog";
 
 // Testing Library does not auto-clean without global test hooks (globals are
 // off in this project), so unmount between cases explicitly.
@@ -305,5 +309,160 @@ describe("SaveSignal", () => {
       "Save rejected: The living run was not replaced.",
     );
     expect(alert).toHaveAttribute("data-tone", "rejected");
+  });
+});
+
+const componentCatalog = createContentCatalog();
+
+function roomByType(roomType: RoomDefinition["roomType"]): RoomDefinition {
+  const room = componentCatalog
+    .listRooms()
+    .find((definition) => definition.roomType === roomType);
+  if (room === undefined) {
+    throw new Error(`catalog has no ${roomType} room`);
+  }
+  return room;
+}
+
+function battleRoom(): RoomDefinition {
+  return roomByType("battle");
+}
+
+function shopRoom(): RoomDefinition {
+  return roomByType("shop");
+}
+
+function offerForRoom(
+  room: RoomDefinition,
+  overrides: Partial<RouteOfferSnapshot> = {},
+): RouteOfferSnapshot {
+  return Object.freeze({
+    offerId: `route:content-1:run-1:offer:${room.id}`,
+    roomType: room.roomType,
+    roomEventKey: `route:content-1:run-1:1:room:${room.id}`,
+    riskTier: room.baseRiskTier,
+    rewardPreviewId: room.rewardPreviewId,
+    visibleCost: room.roomType === "shop" ? 28 : 0,
+    availability: "available",
+    ...overrides,
+  });
+}
+
+function battleOffer(): RouteOfferSnapshot {
+  return offerForRoom(battleRoom());
+}
+
+function shopOffer(): RouteOfferSnapshot {
+  return offerForRoom(shopRoom());
+}
+
+describe("RouteCard", () => {
+  it("renders a radio button with an accessible name resolving the room display name", () => {
+    render(
+      <RouteCard
+        offer={battleOffer()}
+        room={battleRoom()}
+        isSelected={false}
+        isBusy={false}
+        onSelect={vi.fn()}
+      />,
+    );
+    const radio = screen.getByRole("radio", { name: "battle // Glassway" });
+    expect(radio).toHaveAttribute("aria-checked", "false");
+    expect(radio).not.toHaveClass("route-card--selected");
+    expect(radio).toHaveClass("route-card--battle");
+  });
+
+  it("reflects the selected state via aria-checked, a class, and a visible mark", () => {
+    render(
+      <RouteCard
+        offer={battleOffer()}
+        room={battleRoom()}
+        isSelected={true}
+        isBusy={false}
+        onSelect={vi.fn()}
+      />,
+    );
+    const radio = screen.getByRole("radio", { name: "battle // Glassway" });
+    expect(radio).toHaveAttribute("aria-checked", "true");
+    expect(radio).toHaveClass("route-card--selected");
+  });
+
+  it("disables the radio and sets aria-disabled when busy", () => {
+    render(
+      <RouteCard
+        offer={battleOffer()}
+        room={battleRoom()}
+        isSelected={false}
+        isBusy={true}
+        onSelect={vi.fn()}
+      />,
+    );
+    const radio = screen.getByRole("radio", { name: "battle // Glassway" });
+    expect(radio).toBeDisabled();
+    expect(radio).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("invokes onSelect when clicked while not busy", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <RouteCard
+        offer={battleOffer()}
+        room={battleRoom()}
+        isSelected={false}
+        isBusy={false}
+        onSelect={onSelect}
+      />,
+    );
+    await user.click(screen.getByRole("radio", { name: "battle // Glassway" }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes threat, reward, and counterplay display labels from the catalog room", () => {
+    render(
+      <RouteCard
+        offer={battleOffer()}
+        room={battleRoom()}
+        isSelected={false}
+        isBusy={false}
+        onSelect={vi.fn()}
+      />,
+    );
+    const radio = screen.getByRole("radio", { name: "battle // Glassway" });
+    expect(radio).toHaveTextContent("Glassway");
+    expect(radio).toHaveTextContent("Control angles before the hazard lane shifts.");
+    expect(radio).toHaveTextContent("Standard draft and run currency");
+    expect(radio).toHaveTextContent("Low variance");
+  });
+
+  it("formats the offer risk tier as a 0X / 05 token for combat rooms", () => {
+    render(
+      <RouteCard
+        offer={battleOffer()}
+        room={battleRoom()}
+        isSelected={false}
+        isBusy={false}
+        onSelect={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("radio", { name: "battle // Glassway" }),
+    ).toHaveTextContent("02 / 05");
+  });
+
+  it("shows no threat token and an offer readout for shop rooms", () => {
+    render(
+      <RouteCard
+        offer={shopOffer()}
+        room={shopRoom()}
+        isSelected={false}
+        isBusy={false}
+        onSelect={vi.fn()}
+      />,
+    );
+    const radio = screen.getByRole("radio", { name: "shop // Patchbay" });
+    expect(radio).toHaveTextContent("None");
+    expect(radio).toHaveTextContent("3 items // 028 min");
   });
 });
