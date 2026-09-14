@@ -75,11 +75,13 @@ not mutate domain state or call IndexedDB directly.
   abandonment is published before replacement creation, and a failed second
   commit remains a truthful no-run archive warning. Resume, Cancel, class
   selection, and Return-to-archive do not write persistence.
-- `deriveScreen(state)` returns only `{ id: "home", mode: "archive" }` or
-  `{ id: "home", mode: "checkpoint" }`; checkpoint requires ready state plus a
-  living run. `App` observes with `useSyncExternalStore`, initializes once under
-  React Strict Mode, resolves content labels through the catalog, and renders
-  bounded loading/fatal states or the controlled `HomeScreen`.
+- `deriveScreen(state)` returns `{ id: "home", mode: "archive" }`,
+  `{ id: "home", mode: "checkpoint" }`, or `{ id: "route-map" }` (route phase
+  with non-empty offers in checkpoint mode); checkpoint requires ready state
+  plus a living run. `App` observes with `useSyncExternalStore`, initializes once
+  under React Strict Mode, resolves content labels through the catalog, and
+  renders bounded loading/fatal states or the controlled `HomeScreen` or
+  `RouteMapScreen`.
 - `./src/main.tsx` checks the mount point, IndexedDB, UUID generation, and secure
   random bytes before composition. It opens M07 once, injects metadata sources,
   mounts React 19 under Strict Mode, and renders an actionable unsupported state

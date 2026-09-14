@@ -83,8 +83,7 @@
   with `bootstrapProfile()`, `loadState()`, `startRun()`, and `abandonRun()`.
   Start checks both singleton stores and writes within one transaction;
   abandon verifies the current run identity/revision and deletes it within one
-  transaction. Transfer, reset, checkpoint, and terminal-finalization APIs
-  remain deferred.
+  transaction. Transfer, reset, and terminal-finalization APIs remain deferred.
 
 <!-- route-drafting SESSION-01 -->
 ## Checkpoint persistence (route-drafting SESSION-01)
