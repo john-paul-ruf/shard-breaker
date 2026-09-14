@@ -80,3 +80,25 @@
 |------|--------|
 | 2026-08-29 | Added the controlled accessible launch archive and restored-checkpoint composition. |
 | 2026-08-29 | Imported Genesis M08 and screen design contracts into the Forge registry. |
+| 2026-09-14 | route-drafting SESSION-02: Added RouteMapScreen with catalog-resolved display, auto-materialize, radiogroup of RouteCards, commit bar, side panel. |
+
+<!-- route-drafting SESSION-02 -->
+## Route map screen (route-drafting SESSION-02)
+
+- `RouteMapScreen.tsx` — controlled by `RouteMapScreenViewModel` (runId, className,
+  depth, cycle, integrityCurrent/Maximum, routeOffers, selectedOfferId, committed,
+  isBusy, saveSignal, rooms map). Auto-dispatches `route/materialize` on mount when
+  offers are empty (with `setTimeout` retry to handle the durable-command lock race).
+  Renders `AppStatusBar`, path panel (cycle/depth), radiogroup of `RouteCard`s,
+  commit bar (selection readout + "Enter selected room" button, disabled without
+  selection or when busy), and side panel (boss lock info, route reading signals).
+  Dispatches `route/select-offer` and `route/commit`.
+- `RouteMapScreen.test.tsx` — 17 screen tests: renders 4 cards, auto-materialize on
+  mount, select dispatch, commit disabled without selection, commit dispatch, boss
+  depth shows 1 card, busy disables actions.
+- `App.tsx` — builds `RouteMapScreenViewModel` from `AppState` + catalog when
+  `deriveScreen` returns `route-map`; renders `RouteMapScreen` instead of `HomeScreen`.
+- `App.test.tsx` — `saveCheckpoint` mock added to `createMemoryRepository`; route
+  integration test (start → route map → 4 cards → select → commit → room phase).
+- `navigation.ts` — `ScreenDescriptor` extended with `{ id: "route-map" }`;
+  `deriveScreen` returns it for `phase === "route"` in checkpoint mode.
