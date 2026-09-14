@@ -1,7 +1,17 @@
 import type { ContentCatalog } from "../content/catalog";
+import type { GeneratedRouteOffer, GeneratedRoomCandidate } from "../random/generators";
+import { generateRouteOptions, generateRoomCandidate } from "../random/generators";
 import type { RunCommand, RunRejection, RunTransition } from "./commands";
-import type { RunState } from "./model";
+import type {
+  LivingRun,
+  RouteOfferSnapshot,
+  RoomState,
+  RouteState,
+  RunState,
+  ThreatProfileSnapshot,
+} from "./model";
 import { createInitialLivingRun } from "./model";
+import { isBossDepth, routeEventKey } from "./routes";
 import { validateRunState } from "./validation";
 
 function reject(state: RunState, error: RunRejection): RunTransition {
@@ -153,6 +163,314 @@ function abandonRun(
   };
 }
 
+function routeCommandMetadataField(command: {
+  readonly runId: string;
+  readonly commitId: string;
+  readonly expectedRevision: number;
+  readonly now?: number;
+}): string | null {
+  if (!isNonEmptyString(command.runId)) return "runId";
+  if (!isNonEmptyString(command.commitId)) return "commitId";
+  if (!isSafeNonNegativeInteger(command.expectedRevision)) return "expectedRevision";
+  if (command.now !== undefined && !Number.isFinite(command.now)) return "now";
+  return null;
+}
+
+function requireLivingRun(
+  state: RunState,
+  command: { readonly runId: string; readonly expectedRevision: number },
+): { ok: true; run: LivingRun } | { ok: false; transition: RunTransition } {
+  if (state.livingRun === null) {
+    return { ok: false, transition: reject(state, { code: "no-living-run" }) };
+  }
+  if (state.livingRun.runId !== command.runId) {
+    return {
+      ok: false,
+      transition: reject(state, {
+        code: "stale-run",
+        expected: command.runId,
+        actual: state.livingRun.runId,
+      }),
+    };
+  }
+  if (state.livingRun.revision !== command.expectedRevision) {
+    return {
+      ok: false,
+      transition: reject(state, {
+        code: "stale-run-revision",
+        expected: command.expectedRevision,
+        actual: state.livingRun.revision,
+      }),
+    };
+  }
+  return { ok: true, run: state.livingRun };
+}
+
+function mapRouteOffer(offer: GeneratedRouteOffer): RouteOfferSnapshot {
+  return Object.freeze({
+    offerId: offer.offerId,
+    roomType: offer.roomType,
+    roomEventKey: offer.roomEventKey,
+    riskTier: offer.riskTier,
+    rewardPreviewId: offer.rewardPreviewId,
+    visibleCost: offer.visibleCost,
+    availability: offer.availability,
+  });
+}
+
+function mapThreatProfile(
+  profile: GeneratedRoomCandidate["threatProfile"],
+): ThreatProfileSnapshot {
+  return Object.freeze({
+    budget: profile.budget,
+    durabilityFactor: profile.durabilityFactor,
+    density: profile.density,
+    formationId: profile.formationId,
+    hazardIds: Object.freeze([...profile.hazardIds]),
+    bossModifierIds: Object.freeze([...profile.bossModifierIds]),
+  });
+}
+
+function mapRoomCandidate(candidate: GeneratedRoomCandidate): RoomState {
+  return Object.freeze({
+    roomId: candidate.roomId,
+    roomType: candidate.roomType,
+    eventKey: candidate.eventKey,
+    status: candidate.status,
+    objectiveIds: Object.freeze([...candidate.objectiveIds]),
+    threatProfile: mapThreatProfile(candidate.threatProfile),
+    combatCheckpoint: candidate.combatCheckpoint,
+    processedOutcomeIds: Object.freeze([...candidate.processedOutcomeIds]),
+    shop: candidate.shop,
+    recovery: candidate.recovery,
+    boss: candidate.boss,
+    resolutionCommitId: candidate.resolutionCommitId,
+  });
+}
+
+function materializeRoute(
+  state: RunState,
+  command: Extract<RunCommand, { type: "MaterializeRoute" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  const badField = routeCommandMetadataField(command);
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const living = requireLivingRun(state, command);
+  if (!living.ok) return living.transition;
+  const run = living.run;
+
+  const routeState = run.routeState;
+  if (routeState === null) {
+    return reject(state, { code: "invalid-state", issues: ["route phase required"] });
+  }
+  if (routeState.offers.length !== 0) {
+    return reject(state, { code: "route-already-materialized", runId: run.runId });
+  }
+
+  const eventKey = routeEventKey(run.runId, run.contentVersion, run.depth);
+  const offers = generateRouteOptions(catalog, {
+    seed: run.seed,
+    contentVersion: run.contentVersion,
+    runId: run.runId,
+    depth: run.depth,
+    cycle: run.cycle,
+    integrityCurrent: run.integrityCurrent,
+    integrityMax: run.integrityMax,
+    runCurrency: run.runCurrency,
+    routeEventKey: eventKey,
+  });
+
+  const newRouteState: RouteState = Object.freeze({
+    eventKey,
+    offers: Object.freeze(offers.map(mapRouteOffer)),
+    selectedOfferId: null,
+    committed: false,
+  });
+
+  const updatedRun: LivingRun = {
+    ...run,
+    routeState: newRouteState,
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
+function selectRouteOffer(
+  state: RunState,
+  command: Extract<RunCommand, { type: "SelectRouteOffer" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  let badField = routeCommandMetadataField(command);
+  if (badField === null && !isNonEmptyString(command.offerId)) {
+    badField = "offerId";
+  }
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const living = requireLivingRun(state, command);
+  if (!living.ok) return living.transition;
+  const run = living.run;
+
+  const routeState = run.routeState;
+  if (routeState === null) {
+    return reject(state, { code: "invalid-state", issues: ["route phase required"] });
+  }
+  if (routeState.offers.length === 0) {
+    return reject(state, { code: "route-not-materialized", runId: run.runId });
+  }
+  if (routeState.committed) {
+    return reject(state, { code: "route-already-committed", runId: run.runId });
+  }
+  if (!routeState.offers.some((offer) => offer.offerId === command.offerId)) {
+    return reject(state, { code: "unknown-route-offer", offerId: command.offerId });
+  }
+
+  const newRouteState: RouteState = Object.freeze({
+    ...routeState,
+    selectedOfferId: command.offerId,
+  });
+
+  const updatedRun: LivingRun = {
+    ...run,
+    routeState: newRouteState,
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
+function commitRoute(
+  state: RunState,
+  command: Extract<RunCommand, { type: "CommitRoute" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  const badField = routeCommandMetadataField(command);
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const living = requireLivingRun(state, command);
+  if (!living.ok) return living.transition;
+  const run = living.run;
+
+  const routeState = run.routeState;
+  if (routeState === null) {
+    return reject(state, { code: "invalid-state", issues: ["route phase required"] });
+  }
+  if (routeState.offers.length === 0) {
+    return reject(state, { code: "route-not-materialized", runId: run.runId });
+  }
+  if (routeState.selectedOfferId === null) {
+    return reject(state, { code: "route-selection-missing", runId: run.runId });
+  }
+  if (routeState.committed) {
+    return reject(state, { code: "route-already-committed", runId: run.runId });
+  }
+
+  const candidate = generateRoomCandidate(catalog, {
+    seed: run.seed,
+    contentVersion: run.contentVersion,
+    runId: run.runId,
+    depth: run.depth,
+    cycle: run.cycle,
+    integrityCurrent: run.integrityCurrent,
+    integrityMax: run.integrityMax,
+    runCurrency: run.runCurrency,
+    routeEventKey: routeState.eventKey,
+    selectedOfferId: routeState.selectedOfferId,
+  });
+
+  if (isBossDepth(run.depth) !== (candidate.roomType === "boss")) {
+    return reject(state, {
+      code: "invalid-state",
+      issues: ["room type does not satisfy the boss-floor rule"],
+    });
+  }
+
+  const roomState = mapRoomCandidate(candidate);
+
+  const updatedRun: LivingRun = {
+    ...run,
+    phase: "room",
+    routeState: null,
+    roomState,
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
 /**
  * Pure lifecycle transition. Given the current authoritative state and a
  * serializable command, it returns either the next state plus an idempotent
@@ -169,5 +487,11 @@ export function runReducer(
       return startRun(state, command, catalog);
     case "AbandonRun":
       return abandonRun(state, command, catalog);
+    case "MaterializeRoute":
+      return materializeRoute(state, command, catalog);
+    case "SelectRouteOffer":
+      return selectRouteOffer(state, command, catalog);
+    case "CommitRoute":
+      return commitRoute(state, command, catalog);
   }
 }

@@ -21,6 +21,28 @@ export type RunCommand =
       readonly runId: string;
       readonly expectedRevision: number;
       readonly commitId: string;
+    }
+  | {
+      readonly type: "MaterializeRoute";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly commitId: string;
+      readonly now: number;
+    }
+  | {
+      readonly type: "SelectRouteOffer";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly offerId: string;
+      readonly commitId: string;
+      readonly now: number;
+    }
+  | {
+      readonly type: "CommitRoute";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly commitId: string;
+      readonly now: number;
     };
 
 /** Typed, discriminated reasons a lifecycle command is rejected. */
@@ -33,7 +55,12 @@ export type RunRejection =
   | { readonly code: "stale-run"; readonly expected: string; readonly actual: string }
   | { readonly code: "stale-run-revision"; readonly expected: number; readonly actual: number }
   | { readonly code: "invalid-metadata"; readonly field: string }
-  | { readonly code: "invalid-state"; readonly issues: readonly string[] };
+  | { readonly code: "invalid-state"; readonly issues: readonly string[] }
+  | { readonly code: "route-already-materialized"; readonly runId: string }
+  | { readonly code: "route-not-materialized"; readonly runId: string }
+  | { readonly code: "route-already-committed"; readonly runId: string }
+  | { readonly code: "unknown-route-offer"; readonly offerId: string }
+  | { readonly code: "route-selection-missing"; readonly runId: string };
 
 /**
  * Durable write intent emitted alongside a successful transition so adapters
@@ -49,6 +76,12 @@ export type RunPersistenceInstruction =
     }
   | {
       readonly kind: "abandon-run";
+      readonly runId: string;
+      readonly commitId: string;
+      readonly expectedRevision: number;
+    }
+  | {
+      readonly kind: "save-checkpoint";
       readonly runId: string;
       readonly commitId: string;
       readonly expectedRevision: number;

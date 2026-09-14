@@ -11,6 +11,8 @@ import type {
   PersistenceError,
   PersistenceResult,
   RunLifecycleRepository,
+  SaveCheckpointPersistenceInstruction,
+  StartRunPersistenceInstruction,
 } from "../persistence/envelopes";
 import { createAppStore } from "./appStore";
 
@@ -62,6 +64,7 @@ function repositoryFor(
     loadState: vi.fn(async () => success(state)),
     startRun: vi.fn(async () => success(state)),
     abandonRun: vi.fn(async () => success(state)),
+    saveCheckpoint: vi.fn(async () => success(state)),
     ...overrides,
   };
 }
@@ -661,6 +664,162 @@ describe("createAppStore lifecycle commands", () => {
     expect(store.getSnapshot()).toMatchObject({
       livingRun,
       saveSignal: { tone: "rejected" },
+    });
+  });
+});
+
+function createRouteMemoryRepository(
+  profile: Profile,
+  livingRun: LivingRun,
+): RunLifecycleRepository {
+  let currentRun = livingRun;
+  return {
+    bootstrapProfile: vi.fn(async () => success(profile)),
+    loadState: vi.fn(async () => success({ profile, livingRun: currentRun })),
+    startRun: vi.fn<RunLifecycleRepository["startRun"]>(async (instruction: StartRunPersistenceInstruction) => {
+      currentRun = instruction.proposedRun;
+      return success({ profile, livingRun: currentRun });
+    }),
+    abandonRun: vi.fn(async () => {
+      currentRun = null as unknown as LivingRun;
+      return success({ profile, livingRun: null });
+    }),
+    saveCheckpoint: vi.fn<RunLifecycleRepository["saveCheckpoint"]>(async (instruction: SaveCheckpointPersistenceInstruction) => {
+      currentRun = instruction.proposedRun;
+      return success({ profile, livingRun: currentRun });
+    }),
+  };
+}
+
+describe("createAppStore route commands", () => {
+  it("materializes route offers and persists them via saveCheckpoint", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+
+    await store.dispatch({ type: "route/materialize" });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun?.routeState?.offers).toHaveLength(4);
+    expect(snapshot.livingRun?.routeState?.offers.map((o) => o.roomType))
+      .toEqual(["battle", "elite", "shop", "recovery"]);
+    expect(snapshot.livingRun?.routeState?.selectedOfferId).toBeNull();
+    expect(snapshot.livingRun?.routeState?.committed).toBe(false);
+    expect(snapshot.livingRun?.revision).toBe(1);
+    expect(snapshot.isBusy).toBe(false);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Route offers saved at Depth 1.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(1);
+    const instruction = vi.mocked(repository.saveCheckpoint).mock.calls[0]?.[0];
+    expect(instruction).toMatchObject({
+      kind: "save-checkpoint",
+      runId: livingRun.runId,
+      expectedRevision: 0,
+      proposedRun: { revision: 1 },
+    });
+  });
+
+  it("selects a route offer and persists the selection", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+
+    await store.dispatch({ type: "route/materialize" });
+    const offerId = store.getSnapshot().livingRun!.routeState!.offers[0]!.offerId;
+    await store.dispatch({ type: "route/select-offer", offerId });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun?.routeState?.selectedOfferId).toBe(offerId);
+    expect(snapshot.livingRun?.revision).toBe(2);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Route selection saved.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(2);
+  });
+
+  it("commits the route and transitions to the room phase", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+
+    await store.dispatch({ type: "route/materialize" });
+    const offerId = store.getSnapshot().livingRun!.routeState!.offers[0]!.offerId;
+    await store.dispatch({ type: "route/select-offer", offerId });
+    await store.dispatch({ type: "route/commit" });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun?.phase).toBe("room");
+    expect(snapshot.livingRun?.routeState).toBeNull();
+    expect(snapshot.livingRun?.roomState).not.toBeNull();
+    expect(snapshot.livingRun?.roomState?.status).toBe("ready");
+    expect(snapshot.livingRun?.revision).toBe(3);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Committed route to battle room.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects re-materialization after offers exist", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-materialize-2"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+
+    await store.dispatch({ type: "route/materialize" });
+    const firstRevision = store.getSnapshot().livingRun!.revision;
+    await store.dispatch({ type: "route/materialize" });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun?.revision).toBe(firstRevision);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "rejected",
+      message: "Route offers are already materialized and cannot be rerolled.",
+    });
+  });
+
+  it("rejects an unknown offer without changing state", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+
+    await store.dispatch({ type: "route/materialize" });
+    const beforeSelect = store.getSnapshot().livingRun!;
+    await store.dispatch({ type: "route/select-offer", offerId: "offer-fake" });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun?.routeState?.selectedOfferId)
+      .toBe(beforeSelect.routeState?.selectedOfferId);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "rejected",
+      message: "The selected route offer is not part of the current route.",
     });
   });
 });

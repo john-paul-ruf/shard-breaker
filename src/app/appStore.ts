@@ -104,6 +104,16 @@ function runRejectionMessage(error: RunRejection): string {
       return "The run identity could not be created safely. No saved data was changed.";
     case "invalid-state":
       return "The current archive state is invalid. No saved data was changed.";
+    case "route-already-materialized":
+      return "Route offers are already materialized and cannot be rerolled.";
+    case "route-not-materialized":
+      return "No route offers have been materialized yet.";
+    case "route-already-committed":
+      return "The route has already been committed to a room.";
+    case "unknown-route-offer":
+      return "The selected route offer is not part of the current route.";
+    case "route-selection-missing":
+      return "Select a route offer before committing to a room.";
   }
 }
 
@@ -114,7 +124,10 @@ function assertNever(value: never): never {
 function isDurableCommand(command: AppCommand): boolean {
   return (
     command.type === "run/request-start" ||
-    command.type === "run/confirm-abandon-and-start"
+    command.type === "run/confirm-abandon-and-start" ||
+    command.type === "route/materialize" ||
+    command.type === "route/select-offer" ||
+    command.type === "route/commit"
   );
 }
 
@@ -376,6 +389,194 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
     publish({ launchMode: "archive" });
   }
 
+  async function handleMaterializeRoute(): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "MaterializeRoute",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The route could not be materialized safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `Route offers were not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: {
+          tone: "saved",
+          message: `Route offers saved at Depth ${String(committed.value.livingRun.depth)}.`,
+        },
+      });
+    } catch {
+      rejectCommand(
+        "Route offers could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  async function handleSelectRouteOffer(offerId: string): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "SelectRouteOffer",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          offerId,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The route selection could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `Route selection was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: { tone: "saved", message: "Route selection saved." },
+      });
+    } catch {
+      rejectCommand(
+        "Route selection could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  async function handleCommitRoute(): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "CommitRoute",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The route commit could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `The route was not committed. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      const roomType = committed.value.livingRun.roomState?.roomType ?? "room";
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: {
+          tone: "saved",
+          message: `Committed route to ${roomType} room.`,
+        },
+      });
+    } catch {
+      rejectCommand(
+        "The route commit could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
   async function handleConfirmAbandonAndStart(): Promise<void> {
     const beforeAbandon = currentRunState();
     const selectedClassId = state.selectedClassId;
@@ -551,6 +752,15 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
         return;
       case "run/return-to-archive":
         handleReturnToArchive();
+        return;
+      case "route/materialize":
+        await handleMaterializeRoute();
+        return;
+      case "route/select-offer":
+        await handleSelectRouteOffer(command.offerId);
+        return;
+      case "route/commit":
+        await handleCommitRoute();
         return;
     }
     assertNever(command);

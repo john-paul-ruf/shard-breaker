@@ -6,13 +6,14 @@ import { describe, expect, it } from "vitest";
 import type { ContentId } from "../domain/content/catalog";
 import { createContentCatalog } from "../domain/content/catalog";
 import type { RunCommand } from "../domain/run/commands";
-import type { LivingRun, Profile } from "../domain/run/model";
+import type { LivingRun, Profile, RunState } from "../domain/run/model";
 import { createInitialLivingRun } from "../domain/run/model";
 import { runReducer } from "../domain/run/reducer";
 import { openDatabase } from "./database";
 import type {
   AbandonRunPersistenceInstruction,
   RunLifecycleRepository,
+  SaveCheckpointPersistenceInstruction,
   ShardbreakDatabase,
   StartRunPersistenceInstruction,
 } from "./envelopes";
@@ -577,6 +578,262 @@ describe("atomic explicit abandon", () => {
       });
       expect(await testDatabase.database.get("livingRun", "current")).toBeUndefined();
       expect(await testDatabase.database.count("profile")).toBe(1);
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+});
+
+function checkpointInstruction(
+  state: RunState,
+  command: Extract<RunCommand, { readonly type: "MaterializeRoute" | "SelectRouteOffer" | "CommitRoute" }>,
+): SaveCheckpointPersistenceInstruction {
+  const transition = runReducer(state, command, catalog);
+  if (!transition.ok || transition.persistence.kind !== "save-checkpoint") {
+    throw new Error("test route command must produce a save-checkpoint transition");
+  }
+  if (transition.state.livingRun === null) {
+    throw new Error("test route transition must contain a living run");
+  }
+  return {
+    ...transition.persistence,
+    proposedRun: transition.state.livingRun,
+  };
+}
+
+async function startAndCheckpoint(
+  repository: RunLifecycleRepository,
+  profile: Profile,
+): Promise<RunState> {
+  const started = await repository.startRun(startInstruction(profile));
+  if (!started.ok) throw new Error("start must succeed");
+  if (started.value.livingRun === null) throw new Error("start must produce a living run");
+  return started.value;
+}
+
+describe("atomic save-checkpoint", () => {
+  it("persists populated route offers and reloads them after reopen", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const started = await repository.startRun(startInstruction(profile));
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      const livingRun = started.value.livingRun!;
+
+      const instruction = checkpointInstruction(started.value, {
+        type: "MaterializeRoute",
+        runId: livingRun.runId,
+        expectedRevision: livingRun.revision,
+        commitId: "commit-materialize",
+        now: profileMetadata.now + 2,
+      });
+      const result = await repository.saveCheckpoint(instruction);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.livingRun!.routeState!.offers).toHaveLength(4);
+        expect(result.value.livingRun!.revision).toBe(1);
+      }
+
+      const stored = await testDatabase.database.get("livingRun", "current");
+      expect(stored).toBeDefined();
+      expect(stored!.routeState!.offers).toHaveLength(4);
+
+      testDatabase.database.close();
+      const reopened = await openDatabase({
+        name: testDatabase.name,
+        indexedDB: testDatabase.factory,
+      });
+      expect(reopened.ok).toBe(true);
+      if (!reopened.ok) return;
+      try {
+        const loaded = await createRunLifecycleRepository(reopened.value, catalog).loadState();
+        expect(loaded.ok).toBe(true);
+        if (loaded.ok) {
+          expect(loaded.value.livingRun!.routeState!.offers).toHaveLength(4);
+          expect(loaded.value.livingRun!.routeState!.offers.map((o) => o.roomType))
+            .toEqual(["battle", "elite", "shop", "recovery"]);
+          expect(loaded.value.livingRun!.revision).toBe(1);
+        }
+      } finally {
+        reopened.value.close();
+      }
+    } finally {
+      await deleteDatabase(testDatabase.factory, testDatabase.name);
+    }
+  });
+
+  it("rejects a stale revision and preserves the stored run unchanged", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const started = await startAndCheckpoint(repository, profile);
+      const livingRun = started.livingRun!;
+
+      const validInstruction = checkpointInstruction(started, {
+        type: "MaterializeRoute",
+        runId: livingRun.runId,
+        expectedRevision: livingRun.revision,
+        commitId: "commit-materialize",
+        now: profileMetadata.now + 2,
+      });
+      const staleInstruction: SaveCheckpointPersistenceInstruction = {
+        ...validInstruction,
+        expectedRevision: 9,
+      };
+      const result = await repository.saveCheckpoint(staleInstruction);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "stale-run-revision" },
+      });
+      const stored = await testDatabase.database.get("livingRun", "current");
+      expect(stored).toBeDefined();
+      expect(stored!.revision).toBe(0);
+      expect(stored!.routeState!.offers).toHaveLength(0);
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("rejects a missing living run with living-run-missing", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+
+      const fakeRun = createInitialLivingRun(
+        profile.contentVersion,
+        asContentId("class-glitch-knight"),
+        4,
+        null,
+        { runId: "run-ghost", seed: "seed-ghost", now: 1, commitId: "commit-ghost" },
+      );
+      const instruction = checkpointInstruction(
+        { profile, livingRun: fakeRun },
+        {
+          type: "MaterializeRoute",
+          runId: "run-ghost",
+          expectedRevision: 0,
+          commitId: "commit-ghost-materialize",
+          now: 2,
+        },
+      );
+      const result = await repository.saveCheckpoint(instruction);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "living-run-missing" },
+      });
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("persists populated roomState after commit and reloads the same room", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const started = await startAndCheckpoint(repository, profile);
+      const livingRun = started.livingRun!;
+
+      const materialized = checkpointInstruction(started, {
+        type: "MaterializeRoute",
+        runId: livingRun.runId,
+        expectedRevision: livingRun.revision,
+        commitId: "commit-materialize",
+        now: profileMetadata.now + 2,
+      });
+      const matResult = await repository.saveCheckpoint(materialized);
+      expect(matResult.ok).toBe(true);
+      if (!matResult.ok) return;
+      const materializedRun = matResult.value.livingRun!;
+
+      const offerId = materializedRun.routeState!.offers[0]!.offerId;
+      const selected = checkpointInstruction(matResult.value, {
+        type: "SelectRouteOffer",
+        runId: materializedRun.runId,
+        expectedRevision: materializedRun.revision,
+        offerId,
+        commitId: "commit-select",
+        now: profileMetadata.now + 3,
+      });
+      const selResult = await repository.saveCheckpoint(selected);
+      expect(selResult.ok).toBe(true);
+      if (!selResult.ok) return;
+      const selectedRun = selResult.value.livingRun!;
+
+      const committed = checkpointInstruction(selResult.value, {
+        type: "CommitRoute",
+        runId: selectedRun.runId,
+        expectedRevision: selectedRun.revision,
+        commitId: "commit-route",
+        now: profileMetadata.now + 4,
+      });
+      const comResult = await repository.saveCheckpoint(committed);
+      expect(comResult.ok).toBe(true);
+      if (!comResult.ok) return;
+      const committedRun = comResult.value.livingRun!;
+      expect(committedRun.phase).toBe("room");
+      expect(committedRun.routeState).toBeNull();
+      expect(committedRun.roomState).not.toBeNull();
+      expect(committedRun.roomState!.status).toBe("ready");
+      expect(committedRun.revision).toBe(3);
+
+      const stored = await testDatabase.database.get("livingRun", "current");
+      expect(stored).toBeDefined();
+      expect(stored!.phase).toBe("room");
+      expect(stored!.roomState!.roomType).toBe(committedRun.roomState!.roomType);
+
+      testDatabase.database.close();
+      const reopened = await openDatabase({
+        name: testDatabase.name,
+        indexedDB: testDatabase.factory,
+      });
+      expect(reopened.ok).toBe(true);
+      if (!reopened.ok) return;
+      try {
+        const loaded = await createRunLifecycleRepository(reopened.value, catalog).loadState();
+        expect(loaded.ok).toBe(true);
+        if (loaded.ok) {
+          expect(loaded.value.livingRun!.phase).toBe("room");
+          expect(loaded.value.livingRun!.roomState).toEqual(committedRun.roomState);
+        }
+      } finally {
+        reopened.value.close();
+      }
+    } finally {
+      await deleteDatabase(testDatabase.factory, testDatabase.name);
+    }
+  });
+
+  it("rejects a malformed proposed run without overwriting the stored run", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const started = await startAndCheckpoint(repository, profile);
+      const livingRun = started.livingRun!;
+      const storedBefore = await testDatabase.database.get("livingRun", "current");
+
+      const instruction = checkpointInstruction(started, {
+        type: "MaterializeRoute",
+        runId: livingRun.runId,
+        expectedRevision: livingRun.revision,
+        commitId: "commit-materialize",
+        now: profileMetadata.now + 2,
+      });
+      const malformed: SaveCheckpointPersistenceInstruction = {
+        ...instruction,
+        proposedRun: { ...instruction.proposedRun, cycle: 9 },
+      };
+      const result = await repository.saveCheckpoint(malformed);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "invalid-living-run" },
+      });
+      expect(await testDatabase.database.get("livingRun", "current")).toEqual(storedBefore);
     } finally {
       await closeAndDelete(testDatabase);
     }
