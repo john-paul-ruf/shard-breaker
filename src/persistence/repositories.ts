@@ -9,6 +9,7 @@ import type {
   AbandonRunPersistenceInstruction,
   PersistenceResult,
   RunLifecycleRepository,
+  SaveCheckpointPersistenceInstruction,
   ShardbreakDatabase,
   StartRunPersistenceInstruction,
 } from "./envelopes";
@@ -328,6 +329,98 @@ async function abandonRun(
   }
 }
 
+async function saveCheckpoint(
+  database: ShardbreakDatabase,
+  catalog: ContentCatalog,
+  instruction: SaveCheckpointPersistenceInstruction,
+): Promise<PersistenceResult<RunState>> {
+  const stores = [PROFILE_STORE_NAME, LIVING_RUN_STORE_NAME] as const;
+  try {
+    const transaction = database.transaction(stores, "readwrite");
+    const [storedProfile, storedLivingRun] = await Promise.all([
+      transaction.objectStore(PROFILE_STORE_NAME).get(CURRENT_RECORD_KEY),
+      transaction.objectStore(LIVING_RUN_STORE_NAME).get(CURRENT_RECORD_KEY),
+    ]);
+
+    if (storedProfile === undefined) {
+      await transaction.done;
+      return expectedFailure(
+        "profile-missing",
+        "No local profile was found.",
+        { operation: "save-checkpoint" },
+      );
+    }
+    const profileResult = parseProfileRecord(storedProfile, catalog);
+    if (!profileResult.ok) {
+      await transaction.done;
+      return profileResult;
+    }
+
+    if (storedLivingRun === undefined) {
+      await transaction.done;
+      return expectedFailure(
+        "living-run-missing",
+        "No living run was found.",
+        { operation: "save-checkpoint" },
+      );
+    }
+    const livingRunResult = parseLivingRunRecord(storedLivingRun, catalog);
+    if (!livingRunResult.ok) {
+      await transaction.done;
+      return livingRunResult;
+    }
+    if (livingRunResult.value.runId !== instruction.runId) {
+      await transaction.done;
+      return expectedFailure(
+        "stale-run",
+        "The living run changed before the checkpoint could be saved.",
+        { expected: instruction.runId, actual: livingRunResult.value.runId },
+      );
+    }
+    if (livingRunResult.value.revision !== instruction.expectedRevision) {
+      await transaction.done;
+      return expectedFailure(
+        "stale-run-revision",
+        "The living run changed before the checkpoint could be saved.",
+        {
+          expected: instruction.expectedRevision,
+          actual: livingRunResult.value.revision,
+        },
+      );
+    }
+
+    const proposedRunResult = parseLivingRunRecord(instruction.proposedRun, catalog);
+    if (!proposedRunResult.ok) {
+      await transaction.done;
+      return proposedRunResult;
+    }
+
+    const stateResult = parseRunStateRecords(
+      profileResult.value,
+      proposedRunResult.value,
+      catalog,
+    );
+    if (!stateResult.ok || stateResult.value.livingRun === null) {
+      await transaction.done;
+      return stateResult.ok
+        ? expectedFailure(
+            "invalid-living-run",
+            "The proposed run is invalid.",
+            { field: "livingRun" },
+          )
+        : stateResult;
+    }
+
+    await transaction
+      .objectStore(LIVING_RUN_STORE_NAME)
+      .put(stateResult.value.livingRun);
+    await transaction.done;
+    return stateResult;
+  } catch (cause) {
+    return transactionFailure("save-checkpoint", stores, cause);
+  }
+}
+
 /** Construct the atomic profile and living-run lifecycle boundary. */
 export function createRunLifecycleRepository(
   database: ShardbreakDatabase,
@@ -341,5 +434,7 @@ export function createRunLifecycleRepository(
       startRun(database, catalog, instruction),
     abandonRun: (instruction: AbandonRunPersistenceInstruction) =>
       abandonRun(database, catalog, instruction),
+    saveCheckpoint: (instruction: SaveCheckpointPersistenceInstruction) =>
+      saveCheckpoint(database, catalog, instruction),
   });
 }

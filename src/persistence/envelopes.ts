@@ -76,6 +76,19 @@ export type AbandonRunPersistenceInstruction = Extract<
   { readonly kind: "abandon-run" }
 >;
 
+type DomainSaveCheckpointInstruction = Extract<
+  RunPersistenceInstruction,
+  { readonly kind: "save-checkpoint" }
+>;
+
+/**
+ * A checkpoint instruction carries the exact proposed living run so the
+ * adapter validates the complete record before writing it atomically.
+ */
+export type SaveCheckpointPersistenceInstruction = DomainSaveCheckpointInstruction & {
+  readonly proposedRun: LivingRun;
+};
+
 /** Narrow durable surface consumed by the application orchestration boundary. */
 export interface RunLifecycleRepository {
   bootstrapProfile(
@@ -87,5 +100,8 @@ export interface RunLifecycleRepository {
   ): Promise<PersistenceResult<RunState>>;
   abandonRun(
     instruction: AbandonRunPersistenceInstruction,
+  ): Promise<PersistenceResult<RunState>>;
+  saveCheckpoint(
+    instruction: SaveCheckpointPersistenceInstruction,
   ): Promise<PersistenceResult<RunState>>;
 }

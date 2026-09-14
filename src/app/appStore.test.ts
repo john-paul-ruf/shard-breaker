@@ -62,6 +62,7 @@ function repositoryFor(
     loadState: vi.fn(async () => success(state)),
     startRun: vi.fn(async () => success(state)),
     abandonRun: vi.fn(async () => success(state)),
+    saveCheckpoint: vi.fn(async () => success(state)),
     ...overrides,
   };
 }
