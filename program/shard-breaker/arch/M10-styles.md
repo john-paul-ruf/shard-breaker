@@ -47,6 +47,27 @@ tokens, but CSS does not import application modules.
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Imported Genesis M10 and design-token contracts into the Forge registry. |
+| 2026-09-14 | route-drafting SESSION-02: Added route-map styles (global.css) and responsive rules (responsive.css). |
+
+<!-- route-drafting SESSION-02 -->
+## Route-map styles (route-drafting SESSION-02)
+
+### `global.css` additions
+
+- `.route-map`, `.route-map__grid`, `.route-panel`, `.route-cards` (grid
+  `repeat(4, 1fr)`), `.route-card` (flex column, border, radius `--radius-card`),
+  `.route-card--selected` (cyan border + glow), `.route-card--battle/elite/shop/
+  recovery/boss` (route-color via `--color-signal-*` tokens), `.route-card__icon`,
+  `.route-card__list`, `.commit-bar`, `.path-panel`, `.path-step`, `.path-node`,
+  `.route-side-panel`. Color is never the only state signal (selected also has
+  border + `aria-checked`). `.visually-hidden` uses `clip-path: inset(50%)`.
+
+### `responsive.css` additions
+
+- `@media (max-width: 980px)`: route-cards → `repeat(2, 1fr)`, side-panel below.
+- `@media (max-width: 620px)`: route-cards → `1fr`, commit-bar stacks vertically,
+  path-panel collapses.
+- `@media (prefers-reduced-motion: reduce)`: no card hover transforms.
 
 <!-- SESSION-03 -->
 ## M10 — Design System and Responsive Styles (SESSION-03 delta)

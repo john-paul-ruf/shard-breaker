@@ -92,6 +92,7 @@ not mutate domain state or call IndexedDB directly.
 | 2026-08-29 | Added the serialized durable application store, launch navigation, React binding, and browser composition root. |
 | 2026-08-29 | Imported Genesis M01 contract into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |
+| 2026-09-14 | route-drafting SESSION-02: Added route-map screen descriptor and App routing for phase "route". |
 
 <!-- SESSION-02 -->
 ## M01 — Application shell and command store (`./src/app/`)

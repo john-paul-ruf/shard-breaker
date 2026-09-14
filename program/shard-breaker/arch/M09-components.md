@@ -76,3 +76,15 @@
 |------|--------|
 | 2026-08-29 | Added controlled status, Integrity, overwrite-confirmation, and save-feedback primitives. |
 | 2026-08-29 | Imported Genesis M09 contract into the Forge registry. |
+| 2026-09-14 | route-drafting SESSION-02: Added RouteCard accessible radio component with catalog-resolved display. |
+
+<!-- route-drafting SESSION-02 -->
+## RouteCard component (route-drafting SESSION-02)
+
+- `RouteCard.tsx` — accessible route-offer card: `<button role="radio"
+  aria-checked={isSelected}>`. Resolves display fields (displayName, summary,
+  riskLabel, rewardLabel, counterplay) from `RoomDefinition` by `roomType`, not
+  from the durable `RouteOfferSnapshot`. Room-type icon glyphs (B/!/$/+).
+  Risk-tier formatting ("0X / 05"). `visibleCost` shown for shop rooms.
+  `className` includes `route-card route-card--{roomType}` and `route-card--selected`.
+  Disabled when `isBusy`; 44px minimum target; visible focus ring.
