@@ -32,3 +32,4 @@ yarn-error.log*
 /DESIGNER.md
 /SPEC.md
 /.program/
+/program/.DS_Store
