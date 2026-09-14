@@ -2,6 +2,9 @@
 
 > **Program:** Shard Breaker
 > **Feature:** route-drafting
+> **Slug:** session-02
+> **Summary:** Build the route-map screen and RouteCard component, wire navigation and App routing, add route-map styles, and extend the browser e2e journey to prove the materialize/select/commit flow persists across reload.
+> **Wave:** 2
 > **Modules:** M07, M06, M10, M08 (M02 read)
 > **Depends on:** 01
 > **Concurrent with:** —

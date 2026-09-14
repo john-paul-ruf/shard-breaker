@@ -2,6 +2,9 @@
 
 > **Program:** Shard Breaker
 > **Feature:** route-drafting
+> **Slug:** session-01
+> **Summary:** Wire deterministic route/room transitions into the pure reducer, add atomic checkpoint persistence, and wire app-store handlers so route offers, selection, and room commit are durable across reload.
+> **Wave:** 1
 > **Modules:** M03, M04, M06 (M02 read)
 > **Depends on:** —
 > **Concurrent with:** —
