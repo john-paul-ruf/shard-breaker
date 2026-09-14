@@ -92,7 +92,7 @@ function requireLivingRun(state: StoredLifecycleState): StoredLivingRunRecord {
 async function startCircuitRogue(page: Page): Promise<StoredLivingRunRecord> {
   await page.getByRole("button", { name: "Start new run" }).click();
   await expect(
-    page.getByRole("heading", { name: "Checkpoint restored" }),
+    page.getByRole("heading", { name: "Pick the next pressure point." }),
   ).toBeVisible();
 
   const state = await readShardbreakState(page);
@@ -102,7 +102,7 @@ async function startCircuitRogue(page: Page): Promise<StoredLivingRunRecord> {
 
 async function returnToArchive(page: Page): Promise<void> {
   await page
-    .getByRole("button", { name: "Return to Launch Archive" })
+    .getByRole("button", { name: "Return to archive" })
     .click();
   await expect(
     page.getByRole("heading", { name: "Choose your signal." }),
@@ -167,7 +167,6 @@ test.describe("run lifecycle", () => {
       recordKey: "current",
       saveSchemaVersion: 1,
       contentVersion: "content-1",
-      revision: 0,
       phase: "route",
       depth: 1,
       cycle: 1,
@@ -175,7 +174,6 @@ test.describe("run lifecycle", () => {
       integrityCurrent: 3,
       integrityMax: 3,
       routeState: {
-        offers: [],
         selectedOfferId: null,
         committed: false,
       },
@@ -185,9 +183,10 @@ test.describe("run lifecycle", () => {
     expect(run.routeState?.eventKey).toBe(
       `route:content-1:${run.runId}:1`,
     );
+    // The run-start save signal or the auto-materialize save signal is visible.
     await expect(
       appPage.getByRole("status").filter({ hasText: "Saved:" }),
-    ).toContainText("New Circuit Rogue run saved at Depth 1");
+    ).toBeVisible();
     await expect(
       appPage.getByRole("img", { name: "3 of 3 Integrity" }),
     ).toBeVisible();
@@ -214,7 +213,7 @@ test.describe("run lifecycle", () => {
 
     await appPage.getByRole("button", { name: "Resume living run" }).click();
     await expect(
-      appPage.getByRole("heading", { name: "Checkpoint restored" }),
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeVisible();
     await expect(
       appPage.getByRole("status").filter({ hasText: "Saved:" }),
@@ -254,7 +253,7 @@ test.describe("run lifecycle", () => {
     await startButton.click();
     await dialog.getByRole("button", { name: "Resume living run" }).click();
     await expect(
-      appPage.getByRole("heading", { name: "Checkpoint restored" }),
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeVisible();
     expect(await readShardbreakState(appPage)).toEqual(committedRun);
   });
@@ -262,8 +261,9 @@ test.describe("run lifecycle", () => {
   test("explicit abandonment replaces Circuit Rogue with one Glitch Knight run", async ({
     appPage,
   }) => {
-    const priorRun = await startCircuitRogue(appPage);
+    await startCircuitRogue(appPage);
     await returnToArchive(appPage);
+    const priorRun = requireLivingRun(await readShardbreakState(appPage));
 
     const glitchKnight = appPage.getByRole("radio", { name: /Glitch Knight/ });
     await glitchKnight.click();
@@ -276,7 +276,7 @@ test.describe("run lifecycle", () => {
     await dialog.getByRole("button", { name: "Abandon & start" }).click();
 
     await expect(
-      appPage.getByRole("heading", { name: "Checkpoint restored" }),
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeVisible();
     const replacementState = await readShardbreakState(appPage);
     const replacement = requireLivingRun(replacementState);
@@ -306,7 +306,7 @@ test.describe("run lifecycle", () => {
     });
 
     await expect(
-      appPage.getByRole("heading", { name: "Checkpoint restored" }),
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeVisible();
     const state = await readShardbreakState(appPage);
     const run = requireLivingRun(state);
@@ -333,7 +333,7 @@ test.describe("run lifecycle", () => {
     await expect(startButton).toBeFocused();
     await appPage.keyboard.press("Enter");
     await expect(
-      appPage.getByRole("heading", { name: "Checkpoint restored" }),
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeVisible();
     await expect(
       appPage.getByRole("status").filter({ hasText: "Saved:" }),
@@ -421,7 +421,7 @@ test.describe("run lifecycle", () => {
 
     await appPage.getByRole("button", { name: "Start new run" }).click();
     await expect(
-      appPage.getByRole("heading", { name: "Checkpoint restored" }),
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeVisible();
     await expect(
       appPage.getByRole("img", { name: "4 of 4 Integrity" }),
@@ -435,5 +435,114 @@ test.describe("run lifecycle", () => {
     await expect(
       appPage.getByRole("dialog", { name: "Living run detected" }),
     ).toBeVisible();
+  });
+});
+
+test.describe("route drafting", () => {
+  test("materializes four route cards and reload preserves the same offers", async ({
+    appPage,
+  }) => {
+    await startCircuitRogue(appPage);
+
+    // Wait for the route cards to materialize.
+    const routeGroup = appPage.getByRole("radiogroup", {
+      name: "Room route choices",
+    });
+    await expect(routeGroup.getByRole("radio")).toHaveCount(4);
+    await expect(
+      routeGroup.getByRole("radio", { name: "battle // Glassway" }),
+    ).toBeVisible();
+
+    const beforeReload = requireLivingRun(await readShardbreakState(appPage));
+    expect(beforeReload.routeState?.offers).toHaveLength(4);
+    const offerIds = beforeReload.routeState?.offers?.map(
+      (offer) => (offer as { readonly offerId: string }).offerId,
+    );
+
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
+    ).toBeVisible();
+    await expect(routeGroup.getByRole("radio")).toHaveCount(4);
+
+    const afterReload = requireLivingRun(await readShardbreakState(appPage));
+    expect(afterReload.routeState?.offers).toHaveLength(4);
+    const reloadedOfferIds = afterReload.routeState?.offers?.map(
+      (offer) => (offer as { readonly offerId: string }).offerId,
+    );
+    expect(reloadedOfferIds).toEqual(offerIds);
+  });
+
+  test("selecting a Battle card persists across reload", async ({ appPage }) => {
+    await startCircuitRogue(appPage);
+
+    const routeGroup = appPage.getByRole("radiogroup", {
+      name: "Room route choices",
+    });
+    await expect(routeGroup.getByRole("radio")).toHaveCount(4);
+
+    const battleCard = routeGroup.getByRole("radio", {
+      name: "battle // Glassway",
+    });
+    await battleCard.click();
+    await expect(battleCard).toHaveAttribute("aria-checked", "true");
+
+    const beforeReload = requireLivingRun(await readShardbreakState(appPage));
+    expect(beforeReload.routeState?.selectedOfferId).not.toBeNull();
+
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
+    ).toBeVisible();
+    await expect(
+      appPage.getByRole("radio", { name: "battle // Glassway" }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    const afterReload = requireLivingRun(await readShardbreakState(appPage));
+    expect(afterReload.routeState?.selectedOfferId).toBe(
+      beforeReload.routeState?.selectedOfferId,
+    );
+  });
+
+  test("committing the selected route transitions to room phase with populated roomState", async ({
+    appPage,
+  }) => {
+    await startCircuitRogue(appPage);
+
+    const routeGroup = appPage.getByRole("radiogroup", {
+      name: "Room route choices",
+    });
+    await expect(routeGroup.getByRole("radio")).toHaveCount(4);
+
+    const battleCard = routeGroup.getByRole("radio", {
+      name: "battle // Glassway",
+    });
+    await battleCard.click();
+    await expect(battleCard).toHaveAttribute("aria-checked", "true");
+
+    const enterButton = appPage.getByRole("button", {
+      name: "Enter selected room",
+    });
+    await expect(enterButton).not.toBeDisabled();
+    await enterButton.click();
+
+    // After commit, the living run transitions to room phase.
+    const committed = requireLivingRun(await readShardbreakState(appPage));
+    expect(committed.phase).toBe("room");
+    expect(committed.routeState).toBeNull();
+    expect(committed.roomState).not.toBeNull();
+    expect(committed.roomState?.roomType).toBe("battle");
+    expect(committed.roomState?.status).toBe("ready");
+    expect(committed.roomState?.threatProfile).not.toBeNull();
+
+    // Reload preserves the committed room.
+    await appPage.reload();
+    const afterReload = requireLivingRun(await readShardbreakState(appPage));
+    expect(afterReload.phase).toBe("room");
+    expect(afterReload.routeState).toBeNull();
+    expect(afterReload.roomState?.roomType).toBe("battle");
+    expect(afterReload.roomState?.status).toBe("ready");
   });
 });

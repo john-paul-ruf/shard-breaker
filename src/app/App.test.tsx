@@ -124,6 +124,15 @@ function createMemoryRepository(
       livingRun = null;
       return success({ profile, livingRun });
     }),
+    saveCheckpoint: vi.fn<RunLifecycleRepository["saveCheckpoint"]>(
+      async (instruction) => {
+        if (profile === null) {
+          return failure("profile-missing", "No local profile was found.");
+        }
+        livingRun = instruction.proposedRun;
+        return success({ profile, livingRun });
+      },
+    ),
   };
 
   return {
@@ -220,17 +229,55 @@ describe("deriveScreen", () => {
     };
   }
 
-  it("derives checkpoint only for a ready living run in checkpoint mode", () => {
+  it("derives route-map for a living run in route phase checkpoint mode", () => {
     expect(deriveScreen(state({ launchMode: "checkpoint" }))).toEqual({
-      id: "home",
-      mode: "checkpoint",
+      id: "route-map",
     });
+  });
+
+  it("derives checkpoint for a living run in room phase checkpoint mode", () => {
+    const livingRun = makeLivingRun();
+    const roomRun: LivingRun = {
+      ...livingRun,
+      phase: "room",
+      routeState: null,
+      roomState: {
+        roomId: "room-1",
+        roomType: "battle",
+        eventKey: "room-1",
+        status: "ready",
+        objectiveIds: [],
+        threatProfile: {
+          budget: 0,
+          durabilityFactor: 1,
+          density: 0,
+          formationId: "formation-glassway-columns" as ContentId,
+          hazardIds: [],
+          bossModifierIds: [],
+        },
+        combatCheckpoint: null,
+        processedOutcomeIds: [],
+        shop: null,
+        recovery: null,
+        boss: null,
+        resolutionCommitId: null,
+      },
+    };
+    expect(deriveScreen(state({ launchMode: "checkpoint", livingRun: roomRun })))
+      .toEqual({ id: "home", mode: "checkpoint" });
+  });
+
+  it("derives archive when no living run or not in checkpoint mode", () => {
     expect(
       deriveScreen(state({ livingRun: null, launchMode: "checkpoint" })),
     ).toEqual({ id: "home", mode: "archive" });
     expect(
       deriveScreen(state({ loadStatus: "failed", launchMode: "checkpoint" })),
     ).toEqual({ id: "home", mode: "archive" });
+    expect(deriveScreen(state({ launchMode: "archive" }))).toEqual({
+      id: "home",
+      mode: "archive",
+    });
   });
 });
 
@@ -309,8 +356,9 @@ describe("App integration", () => {
     );
     await user.click(screen.getByRole("button", { name: "Start new run" }));
 
+    // A new run opens on the route phase, so the route map renders.
     expect(
-      await screen.findByRole("heading", { name: "Checkpoint restored" }),
+      await screen.findByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/Glitch Knight/).length).toBeGreaterThan(0);
     expect(memory.repository.startRun).toHaveBeenCalledTimes(1);
@@ -323,18 +371,18 @@ describe("App integration", () => {
       await screen.findByRole("heading", { name: "Living run detected" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Checkpoint restored" }),
+      screen.queryByRole("heading", { name: "Pick the next pressure point." }),
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Resume living run" }));
     expect(
-      await screen.findByRole("heading", { name: "Checkpoint restored" }),
+      await screen.findByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeInTheDocument();
     expect(memory.repository.startRun).toHaveBeenCalledTimes(1);
     expect(memory.repository.abandonRun).not.toHaveBeenCalled();
 
     await user.click(
-      screen.getByRole("button", { name: "Return to Launch Archive" }),
+      screen.getByRole("button", { name: "Return to archive" }),
     );
     expect(
       await screen.findByRole("heading", { name: "Choose your signal." }),
@@ -388,7 +436,7 @@ describe("App integration", () => {
     await user.click(screen.getByRole("button", { name: "Abandon & start" }));
 
     expect(
-      await screen.findByRole("heading", { name: "Checkpoint restored" }),
+      await screen.findByRole("heading", { name: "Pick the next pressure point." }),
     ).toBeInTheDocument();
     const committed = memory.getState();
     expect(committed?.livingRun).toMatchObject({
@@ -435,5 +483,65 @@ describe("App integration", () => {
       livingRun: null,
       loadStatus: "ready",
     });
+  });
+
+  it("starts a run, auto-materializes the route map, selects Battle, and commits to room", async () => {
+    const user = userEvent.setup();
+    const memory = createMemoryRepository({
+      profile: makeProfile(),
+      livingRun: null,
+    });
+    const store = createStore(memory.repository, [
+      "run-route",
+      "commit-route-start",
+      "commit-materialize",
+      "commit-select",
+      "commit-room",
+    ]);
+    render(
+      <App store={store} catalog={catalog} />,
+    );
+    await screen.findByRole("heading", { name: "Choose your signal." });
+
+    await user.click(screen.getByRole("button", { name: "Start new run" }));
+
+    const routeHeading = await screen.findByRole("heading", {
+      name: "Pick the next pressure point.",
+    });
+    expect(routeHeading).toBeInTheDocument();
+
+    // Wait for the cards to materialize.
+    await waitFor(
+      () =>
+        expect(store.getSnapshot().livingRun?.routeState?.offers).toHaveLength(4),
+      { timeout: 5000 },
+    );
+    await screen.findByRole("radio", { name: "battle // Glassway" }, { timeout: 5000 });
+
+    expect(memory.repository.startRun).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(memory.repository.saveCheckpoint).toHaveBeenCalledTimes(1),
+    );
+    expect(store.getSnapshot().livingRun?.routeState?.offers).toHaveLength(4);
+
+    // Select Battle.
+    await user.click(screen.getByRole("radio", { name: "battle // Glassway" }));
+    await waitFor(() =>
+      expect(store.getSnapshot().livingRun?.routeState?.selectedOfferId).not.toBeNull(),
+    );
+    const selectedOfferId = store.getSnapshot().livingRun?.routeState?.selectedOfferId;
+    expect(selectedOfferId).not.toBeNull();
+
+    // Commit to room.
+    await user.click(screen.getByRole("button", { name: "Enter selected room" }));
+    await waitFor(() =>
+      expect(store.getSnapshot().livingRun?.phase).toBe("room"),
+    );
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun?.phase).toBe("room");
+    expect(snapshot.livingRun?.routeState).toBeNull();
+    expect(snapshot.livingRun?.roomState).not.toBeNull();
+    expect(snapshot.livingRun?.roomState?.status).toBe("ready");
+    expect(memory.repository.saveCheckpoint).toHaveBeenCalledTimes(3);
   });
 });

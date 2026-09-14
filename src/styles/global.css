@@ -470,3 +470,515 @@ button:focus-visible,
   box-shadow: none;
   cursor: progress;
 }
+
+/*
+ * Route map composition. Desktop is the base layout: a two-region grid with
+ * the route panel and side panel. The responsive reflow and reduced-motion
+ * overrides live in responsive.css. State is expressed through modifiers and
+ * aria attributes, never color alone.
+ */
+
+.route-map {
+  width: min(1240px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: var(--space-24) 0 var(--space-32);
+}
+
+.route-map__head {
+  margin-bottom: var(--space-16);
+}
+
+.route-map__title {
+  font-weight: 900;
+  font-size: clamp(2.5rem, 5vw, 4.5rem);
+  line-height: 0.9;
+  letter-spacing: -0.08em;
+  text-transform: uppercase;
+}
+
+.route-map__lede {
+  max-width: 500px;
+  margin-top: var(--space-12);
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.route-map__stats {
+  display: flex;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+
+.route-map__stat {
+  min-width: 100px;
+  padding: var(--space-12);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-control);
+  background: rgb(14 21 35 / 86%);
+}
+
+.route-map__stat span {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.route-map__stat strong {
+  display: block;
+  margin-top: var(--space-4);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 16px;
+}
+
+/* Path panel: floor progress indicator with done/current/boss steps. */
+.path-panel {
+  padding: 17px 20px;
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-card);
+  background: rgb(14 21 35 / 78%);
+}
+
+.path-panel__label {
+  display: flex;
+  justify-content: space-between;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.path-panel__label strong {
+  color: var(--color-signal-amber);
+}
+
+.path-panel__steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: center;
+  gap: 0;
+  margin-top: var(--space-16);
+}
+
+.path-step {
+  position: relative;
+  text-align: center;
+}
+
+.path-step:not(:first-child)::before {
+  position: absolute;
+  top: 10px;
+  right: 50%;
+  left: -50%;
+  height: 1px;
+  content: "";
+  background: var(--line-translucent);
+}
+
+.path-step--done:not(:first-child)::before {
+  background: var(--color-signal-cyan);
+}
+
+.path-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 21px;
+  height: 21px;
+  margin: 0 auto var(--space-8);
+  place-items: center;
+  border: 1px solid var(--line-translucent);
+  border-radius: 50%;
+  background: var(--color-ink);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+}
+
+.path-step--done .path-node {
+  border-color: var(--color-signal-cyan);
+  color: var(--color-signal-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.path-step--current .path-node {
+  border-color: var(--color-signal-amber);
+  color: var(--color-signal-amber);
+  box-shadow: 0 0 14px rgb(255 200 87 / 28%);
+}
+
+.path-step--boss .path-node {
+  border-color: var(--color-signal-magenta);
+  color: var(--color-signal-magenta);
+  box-shadow: var(--glow-magenta);
+}
+
+.path-step span {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.path-step--current span {
+  color: var(--color-text-primary);
+}
+
+.path-step--boss span {
+  color: var(--color-signal-magenta);
+}
+
+/* Route grid: route panel + side panel. */
+.route-map__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 306px;
+  gap: var(--space-16);
+  margin-top: var(--space-16);
+}
+
+.route-panel {
+  padding: var(--space-24);
+}
+
+.route-panel__head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding-bottom: var(--space-16);
+  border-bottom: 1px solid var(--line-translucent);
+}
+
+.route-panel__head h2 {
+  margin-top: var(--space-8);
+  font-weight: 900;
+  font-size: 21px;
+  letter-spacing: -0.04em;
+  text-transform: uppercase;
+}
+
+.route-panel__head p {
+  margin-top: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.route-panel__hint {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+/* Route cards: a 4-column grid of accessible radio buttons. */
+.route-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+
+/* Route card: accessible single-choice button with room-type accent.
+   Color is reinforced by border, shape, and aria-checked — never color alone. */
+.route-card {
+  display: flex;
+  min-height: 270px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: var(--space-12);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-control);
+  background: linear-gradient(150deg, rgb(20 30 48 / 82%), rgb(10 15 26 / 86%));
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.route-card:hover {
+  border-color: rgb(84 246 209 / 60%);
+  transform: translateY(-2px);
+}
+
+/* Selected: cyan border, tint, and glow, paired with aria-checked. */
+.route-card--selected {
+  border-color: var(--color-signal-cyan);
+  box-shadow: var(--glow-cyan);
+  background: linear-gradient(150deg, rgb(84 246 209 / 13%), rgb(10 15 26 / 88%));
+}
+
+/* Room-type accents via the --route-color custom property. */
+.route-card--battle {
+  --route-color: var(--color-signal-cyan);
+}
+
+.route-card--elite {
+  --route-color: var(--color-signal-magenta);
+}
+
+.route-card--shop {
+  --route-color: var(--color-signal-violet);
+}
+
+.route-card--recovery {
+  --route-color: var(--color-signal-amber);
+}
+
+.route-card--boss {
+  --route-color: var(--color-signal-danger);
+}
+
+.route-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--route-color);
+}
+
+.route-card__icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid currentcolor;
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 12px;
+  transform: skew(-8deg);
+}
+
+.route-card__type {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.route-card__name {
+  margin-top: var(--space-16);
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+.route-card__summary {
+  min-height: 56px;
+  margin-top: var(--space-8);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.route-card__list {
+  display: grid;
+  gap: var(--space-8);
+  margin-top: auto;
+  padding-top: var(--space-12);
+  border-top: 1px solid var(--line-translucent);
+  list-style: none;
+}
+
+.route-card__list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-8);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.route-card__list b {
+  color: var(--color-text-primary);
+  font-weight: 700;
+  text-align: right;
+}
+
+.route-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+  color: var(--route-color);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Select mark: a hollow circle that fills cyan when selected (shape + color). */
+.route-card__mark {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border: 1px solid var(--line-translucent);
+  border-radius: 50%;
+  color: transparent;
+  font-size: 10px;
+}
+
+.route-card--selected .route-card__mark {
+  border-color: var(--color-signal-cyan);
+  background: var(--color-signal-cyan);
+  color: #061111;
+}
+
+/* Disabled route card: flatten and block the pointer. */
+.route-card:disabled,
+.route-card[aria-disabled="true"] {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.route-card:disabled:hover,
+.route-card[aria-disabled="true"]:hover {
+  border-color: var(--line-translucent);
+  transform: none;
+  box-shadow: none;
+}
+
+/* Commit bar: selection readout + enter button. */
+.commit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  margin-top: var(--space-16);
+  padding-top: var(--space-16);
+  border-top: 1px solid var(--line-translucent);
+}
+
+.commit-bar__readout {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.commit-bar__readout b {
+  color: var(--color-text-primary);
+}
+
+/* Side panel: boss lock and route reading signals. */
+.route-side-panel {
+  display: grid;
+  gap: var(--space-12);
+  align-content: start;
+}
+
+.route-side-panel__section {
+  padding: var(--space-16);
+}
+
+.route-side-panel__section h2 {
+  margin-top: var(--space-8);
+  font-weight: 900;
+  font-size: 17px;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+.route-side-panel__section p {
+  margin-top: var(--space-8);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.route-side-panel__callout {
+  margin-top: var(--space-16);
+  padding: var(--space-12);
+  border-left: 2px solid var(--color-signal-amber);
+  background: rgb(255 200 87 / 6%);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.route-side-panel__callout strong {
+  color: var(--color-signal-amber);
+}
+
+.route-side-panel__signals {
+  display: grid;
+  gap: var(--space-12);
+  margin-top: var(--space-16);
+  padding: 0;
+  list-style: none;
+}
+
+.route-side-panel__signals li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: var(--space-8);
+  align-items: start;
+}
+
+.route-side-panel__icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid var(--line-translucent);
+  color: var(--color-signal-cyan);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.route-side-panel__signals b {
+  display: block;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.route-side-panel__signals span {
+  display: block;
+  margin-top: var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Visually hidden but accessible to screen readers. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

@@ -25,6 +25,16 @@
   .launch-hero {
     order: 2;
   }
+
+  /* Route map: collapse to single column, side panel below route panel. */
+  .route-map__grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Route cards: 2-column grid on tablet. */
+  .route-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 /* Portrait phone (<= 720px): 56px bar, 16px gutters, urgent run state first,
@@ -54,6 +64,33 @@
   .confirmation-dialog__actions {
     grid-template-columns: 1fr;
   }
+
+  /* Route map phone: single-column cards, stacked commit bar. */
+  .route-map {
+    width: min(100% - 32px, 560px);
+    padding: var(--space-24) 0 var(--space-32);
+  }
+
+  .route-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .route-card {
+    min-height: 0;
+  }
+
+  .route-card__summary {
+    min-height: 0;
+  }
+
+  .commit-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .commit-bar .action-button {
+    width: 100%;
+  }
 }
 
 /* Reduced motion: remove decorative transitions, pulsing glows, and the
@@ -80,6 +117,14 @@
   .integrity-meter__pip[data-filled="true"],
   .confirmation-dialog,
   .checkpoint-open {
+    box-shadow: none;
+  }
+
+  .route-card:hover {
+    transform: none;
+  }
+
+  .route-card--selected {
     box-shadow: none;
   }
 }
