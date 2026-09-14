@@ -60,6 +60,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Imported Genesis M05 contract into the Forge registry. |
+| 2026-09-14 | route-drafting SESSION-01: Added MaterializeRoute/SelectRouteOffer/CommitRoute commands, reducer transitions with generator-to-snapshot mapping, save-checkpoint persistence instruction. |
 
 <!-- SESSION-02 -->
 ## M05 — Run and profile state machine (`./src/domain/run/`)
@@ -94,3 +95,25 @@
   copied carry-over relic, and does not mutate/increment the profile. `AbandonRun`
   removes the living run and grants nothing. No React/browser/persistence/random/time
   imports.
+
+<!-- route-drafting SESSION-01 -->
+## Route transitions (route-drafting SESSION-01)
+
+- `commands.ts` — `RunCommand` extended with `MaterializeRoute`, `SelectRouteOffer`,
+  `CommitRoute` (all carry `runId`, `expectedRevision`, `commitId`; materialize/commit
+  also carry `now`; select carries `offerId` and `now`). New rejection codes:
+  `route-already-materialized`, `route-not-materialized`, `route-already-committed`,
+  `unknown-route-offer`, `route-selection-missing`. `RunPersistenceInstruction`
+  extended with `save-checkpoint`.
+- `reducer.ts` — three new transitions: `materializeRoute` (builds
+  `RouteGenerationContext`, calls `generateRouteOptions`, maps
+  `GeneratedRouteOffer` → `RouteOfferSnapshot` dropping display fields,
+  idempotent reject if offers exist), `selectRouteOffer` (sets `selectedOfferId`,
+  validates against offers), `commitRoute` (builds `RoomGenerationContext` with
+  `selectedOfferId`, calls `generateRoomCandidate`, maps `GeneratedRoomCandidate` →
+  `RoomState` dropping display fields and `threatProfile.diagnostics`, transitions
+  `phase: "route" → "room"`, nulls `routeState`). All bump revision, set
+  `updatedAt`/`lastCommitId`, emit `save-checkpoint` persistence instruction.
+- `route.test.ts` — 22 domain tests covering materialize (4 offers, boss depth,
+  idempotent), select (valid, unknown, empty, committed), commit (phase transition,
+  room population, boss-depth, rejections), and `validateLivingRun` on all results.

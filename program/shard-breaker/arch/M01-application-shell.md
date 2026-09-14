@@ -91,6 +91,7 @@ not mutate domain state or call IndexedDB directly.
 |------|--------|
 | 2026-08-29 | Added the serialized durable application store, launch navigation, React binding, and browser composition root. |
 | 2026-08-29 | Imported Genesis M01 contract into the Forge registry. |
+| 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |
 
 <!-- SESSION-02 -->
 ## M01 — Application shell and command store (`./src/app/`)
@@ -99,3 +100,18 @@ not mutate domain state or call IndexedDB directly.
   `run/request-start`, `run/resume`, `run/cancel-replacement`,
   `run/confirm-abandon-and-start`, `run/return-to-archive`. Controlled intent only;
   no metadata from the DOM, no React/screen imports, no mutable re-exports.
+
+<!-- route-drafting SESSION-01 -->
+## Route app commands (route-drafting SESSION-01)
+
+- `commands.ts` — `AppCommand` extended with `route/materialize`,
+  `route/select-offer` (carries `offerId`), `route/commit`.
+- `appStore.ts` — three new handlers: `handleMaterializeRoute` (injects
+  `commitId`/`now`, builds `MaterializeRoute` run command, calls `runReducer`,
+  persists via `saveCheckpoint`, publishes state + save signal),
+  `handleSelectRouteOffer`, `handleCommitRoute`. All three added to
+  `isDurableCommand` and `runRejectionMessage` with bounded messages for the new
+  route rejection codes.
+- `appStore.test.ts` — 5 store integration tests: materialize → offers populated,
+  select → selection persisted, commit → room phase, re-materialize rejected,
+  unknown offer rejected.
