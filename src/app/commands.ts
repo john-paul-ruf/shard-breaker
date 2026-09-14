@@ -13,4 +13,7 @@ export type AppCommand =
   | { readonly type: "run/resume" }
   | { readonly type: "run/cancel-replacement" }
   | { readonly type: "run/confirm-abandon-and-start" }
-  | { readonly type: "run/return-to-archive" };
+  | { readonly type: "run/return-to-archive" }
+  | { readonly type: "route/materialize" }
+  | { readonly type: "route/select-offer"; readonly offerId: string }
+  | { readonly type: "route/commit" };
