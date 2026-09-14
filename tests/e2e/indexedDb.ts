@@ -41,6 +41,27 @@ export interface StoredLivingRunRecord {
     readonly selectedOfferId: string | null;
     readonly committed: boolean;
   } | null;
+  readonly roomState: {
+    readonly roomId: string;
+    readonly roomType: string;
+    readonly eventKey: string;
+    readonly status: string;
+    readonly objectiveIds: readonly unknown[];
+    readonly threatProfile: {
+      readonly budget: number;
+      readonly durabilityFactor: number;
+      readonly density: number;
+      readonly formationId: string;
+      readonly hazardIds: readonly unknown[];
+      readonly bossModifierIds: readonly unknown[];
+    } | null;
+    readonly combatCheckpoint: unknown | null;
+    readonly processedOutcomeIds: readonly unknown[];
+    readonly shop: unknown | null;
+    readonly recovery: unknown | null;
+    readonly boss: unknown | null;
+    readonly resolutionCommitId: string | null;
+  } | null;
 }
 
 export interface StoredLifecycleState {
