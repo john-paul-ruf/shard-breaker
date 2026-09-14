@@ -9,8 +9,12 @@ import type { AppCommand } from "./commands";
 import type { ContentCatalog, ContentId } from "../domain/content/catalog";
 import { HomeScreen } from "../ui/screens/HomeScreen";
 import type { HomeScreenViewModel } from "../ui/screens/HomeScreen";
+import { RouteMapScreen } from "../ui/screens/RouteMapScreen";
+import { createRouteMapScreenModel } from "../ui/screens/RouteMapScreen";
+import type { RouteMapScreenViewModel } from "../ui/screens/RouteMapScreen";
 import type { AppState, AppStore } from "./appStore";
 import { deriveScreen } from "./navigation";
+import type { ScreenDescriptor } from "./navigation";
 
 export interface AppProps {
   readonly store: AppStore;
@@ -60,6 +64,10 @@ type HomeModelResult =
   | { readonly ok: true; readonly model: HomeScreenViewModel }
   | { readonly ok: false; readonly message: string };
 
+type RouteMapModelResult =
+  | { readonly ok: true; readonly model: RouteMapScreenViewModel }
+  | { readonly ok: false; readonly message: string };
+
 function isUnlocked(
   profileClassIds: readonly ContentId[],
   classId: ContentId,
@@ -70,6 +78,7 @@ function isUnlocked(
 function createHomeModel(
   state: AppState,
   catalog: ContentCatalog,
+  screen: Extract<ScreenDescriptor, { id: "home" }>,
 ): HomeModelResult {
   const profile = state.profile;
   if (state.loadStatus !== "ready" || profile === null) {
@@ -123,7 +132,7 @@ function createHomeModel(
   return {
     ok: true,
     model: {
-      mode: deriveScreen(state).mode,
+      mode: screen.mode,
       loadState: "ready",
       shards: profile.shards,
       highestReachedDepth: profile.records.highestReachedDepth,
@@ -134,6 +143,39 @@ function createHomeModel(
       isBusy: state.isBusy,
       saveSignal: state.saveSignal,
     },
+  };
+}
+
+function createRouteMapModel(
+  state: AppState,
+  catalog: ContentCatalog,
+): RouteMapModelResult {
+  const livingRun = state.livingRun;
+  const profile = state.profile;
+  if (state.loadStatus !== "ready" || profile === null || livingRun === null) {
+    return {
+      ok: false,
+      message: "The route map is not available without a living run.",
+    };
+  }
+
+  const classResult = catalog.getClass(livingRun.classId);
+  if (!classResult.ok) {
+    return {
+      ok: false,
+      message: "The saved living run references an unknown class.",
+    };
+  }
+
+  return {
+    ok: true,
+    model: createRouteMapScreenModel(
+      livingRun,
+      classResult.value.displayName,
+      catalog,
+      state.isBusy,
+      state.saveSignal,
+    ),
   };
 }
 
@@ -169,7 +211,18 @@ export function App({ store, catalog }: AppProps) {
     return <ErrorShell message={boundedFatalMessage(state.fatalMessage)} />;
   }
 
-  const home = createHomeModel(state, catalog);
+  const screen = deriveScreen(state);
+
+  if (screen.id === "route-map") {
+    const routeModel = createRouteMapModel(state, catalog);
+    return routeModel.ok ? (
+      <RouteMapScreen model={routeModel.model} dispatch={dispatch} />
+    ) : (
+      <ErrorShell message={routeModel.message} />
+    );
+  }
+
+  const home = createHomeModel(state, catalog, screen);
   return home.ok ? (
     <HomeScreen model={home.model} dispatch={dispatch} />
   ) : (
