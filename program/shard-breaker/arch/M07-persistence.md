@@ -64,6 +64,7 @@
 |------|--------|
 | 2026-08-29 | Imported Genesis M07 and database contracts into the Forge registry. |
 | 2026-08-29 | Added the run-lifecycle repository, v1 envelope validation, and migration-backed database opening. |
+| 2026-09-14 | route-drafting SESSION-01: Added saveCheckpoint repository method and SaveCheckpointPersistenceInstruction for atomic checkpoint persistence. |
 
 <!-- SESSION-04 -->
 ## Run-lifecycle foundation API
@@ -84,3 +85,17 @@
   abandon verifies the current run identity/revision and deletes it within one
   transaction. Transfer, reset, checkpoint, and terminal-finalization APIs
   remain deferred.
+
+<!-- route-drafting SESSION-01 -->
+## Checkpoint persistence (route-drafting SESSION-01)
+
+- `envelopes.ts` — `SaveCheckpointPersistenceInstruction` added
+  (`Extract<RunPersistenceInstruction, { kind: "save-checkpoint" }> & { readonly proposedRun: LivingRun }`).
+  `RunLifecycleRepository` extended with `saveCheckpoint(instruction)`.
+- `repositories.ts` — `saveCheckpoint` implemented: one `readwrite` transaction on
+  `[PROFILE_STORE_NAME, LIVING_RUN_STORE_NAME]`, reads stored living run,
+  validates `runId`/`revision` match, parses proposed run via
+  `parseLivingRunRecord`, runs `parseRunStateRecords` for combined validation,
+  `put`s the proposed run, returns `{ profile, livingRun: proposedRun }`.
+- `repositories.test.ts` — 5 checkpoint tests: success with populated routeState,
+  stale revision, missing living run, populated roomState, malformed proposed run.
