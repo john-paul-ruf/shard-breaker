@@ -2,6 +2,10 @@ import type { BossRoutingIdentity } from "./bosses";
 import { BOSS_ROUTING_IDENTITIES } from "./bosses";
 import type { ClassDefinition } from "./classes";
 import { CLASS_DEFINITIONS } from "./classes";
+import type { EnhancementDefinition } from "./enhancements";
+import { ENHANCEMENT_DEFINITIONS } from "./enhancements";
+import type { EquipmentDefinition } from "./equipment";
+import { EQUIPMENT_DEFINITIONS } from "./equipment";
 import type {
   RoomDefinition,
   RouteSupportDefinition,
@@ -14,6 +18,8 @@ import {
   ROUTE_SUPPORT_DEFINITIONS,
   SHOP_SERVICE_DEFINITIONS,
 } from "./rooms";
+import type { SkillDefinition } from "./skills";
+import { SKILL_DEFINITIONS } from "./skills";
 
 declare const contentBrand: unique symbol;
 
@@ -65,6 +71,12 @@ export interface ContentCatalog {
   getShopService(id: ContentId): ContentLookupResult<ShopServiceDefinition>;
   listBosses(): readonly BossRoutingIdentity[];
   getBoss(id: ContentId): ContentLookupResult<BossRoutingIdentity>;
+  listSkills(): readonly SkillDefinition[];
+  getSkill(id: ContentId): ContentLookupResult<SkillDefinition>;
+  listEquipment(): readonly EquipmentDefinition[];
+  getEquipment(id: ContentId): ContentLookupResult<EquipmentDefinition>;
+  listEnhancements(): readonly EnhancementDefinition[];
+  getEnhancement(id: ContentId): ContentLookupResult<EnhancementDefinition>;
   hasContent(id: ContentId): boolean;
 }
 
@@ -174,6 +186,37 @@ export function createContentCatalog(): ContentCatalog {
     bossesById.set(definition.id, definition);
   }
 
+  const skillsById = new Map<ContentId, SkillDefinition>();
+  for (const definition of SKILL_DEFINITIONS) {
+    registerKnownId(knownContentIds, definition.id, "skills");
+    if (!Number.isSafeInteger(definition.maxCharges) || definition.maxCharges < 1) {
+      throw new Error(`invalid skill charge maximum: ${definition.id}`);
+    }
+    skillsById.set(definition.id, definition);
+  }
+
+  const equipmentById = new Map<ContentId, EquipmentDefinition>();
+  for (const definition of EQUIPMENT_DEFINITIONS) {
+    registerKnownId(knownContentIds, definition.id, "equipment");
+    equipmentById.set(definition.id, definition);
+  }
+
+  const enhancementsById = new Map<ContentId, EnhancementDefinition>();
+  const enhancementEffectKeys = new Set<string>();
+  for (const definition of ENHANCEMENT_DEFINITIONS) {
+    registerKnownId(knownContentIds, definition.id, "enhancements");
+    if (!Number.isSafeInteger(definition.minDepth) || definition.minDepth < 1) {
+      throw new Error(`invalid enhancement depth gate: ${definition.id}`);
+    }
+    if (enhancementEffectKeys.has(definition.effectKey)) {
+      throw new Error(
+        `duplicate enhancement effect key in catalog: ${definition.effectKey}`,
+      );
+    }
+    enhancementEffectKeys.add(definition.effectKey);
+    enhancementsById.set(definition.id, definition);
+  }
+
   if (RECOVERY_RESTORE_AMOUNT !== 1) {
     throw new Error("recovery must restore exactly 1 Integrity");
   }
@@ -182,6 +225,9 @@ export function createContentCatalog(): ContentCatalog {
   const rooms = Object.freeze([...ROOM_DEFINITIONS]);
   const shopServices = Object.freeze([...SHOP_SERVICE_DEFINITIONS]);
   const bosses = Object.freeze([...BOSS_ROUTING_IDENTITIES]);
+  const skills = Object.freeze([...SKILL_DEFINITIONS]);
+  const equipment = Object.freeze([...EQUIPMENT_DEFINITIONS]);
+  const enhancements = Object.freeze([...ENHANCEMENT_DEFINITIONS]);
   const initialClassUnlockIds = Object.freeze(
     classes
       .filter((definition) => definition.availability === "initial")
@@ -205,6 +251,12 @@ export function createContentCatalog(): ContentCatalog {
     getShopService: (id) => lookup(shopServicesById, id),
     listBosses: () => bosses,
     getBoss: (id) => lookup(bossesById, id),
+    listSkills: () => skills,
+    getSkill: (id) => lookup(skillsById, id),
+    listEquipment: () => equipment,
+    getEquipment: (id) => lookup(equipmentById, id),
+    listEnhancements: () => enhancements,
+    getEnhancement: (id) => lookup(enhancementsById, id),
     hasContent: (id) => knownContentIds.has(id),
   };
   return Object.freeze(catalog);

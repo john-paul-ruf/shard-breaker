@@ -5,11 +5,17 @@ import { CONTENT_VERSION, createContentCatalog } from "./catalog";
 import { BOSS_ROUTING_IDENTITIES } from "./bosses";
 import type { ClassDefinition } from "./classes";
 import { CLASS_DEFINITIONS } from "./classes";
+import type { EnhancementDefinition } from "./enhancements";
+import { ENHANCEMENT_DEFINITIONS } from "./enhancements";
+import type { EquipmentDefinition } from "./equipment";
+import { EQUIPMENT_DEFINITIONS } from "./equipment";
 import {
   ROOM_DEFINITIONS,
   ROUTE_SUPPORT_DEFINITIONS,
   SHOP_SERVICE_DEFINITIONS,
 } from "./rooms";
+import type { SkillDefinition } from "./skills";
+import { SKILL_DEFINITIONS } from "./skills";
 
 const asContentId = (value: string): ContentId => value as ContentId;
 
@@ -81,12 +87,15 @@ describe("content catalog", () => {
 
   it("keeps every authored ID globally unique and known", () => {
     const catalog = createContentCatalog();
-    const definitions = [
+    const definitions: readonly { readonly id: ContentId }[] = [
       ...CLASS_DEFINITIONS,
       ...ROOM_DEFINITIONS,
       ...ROUTE_SUPPORT_DEFINITIONS,
       ...SHOP_SERVICE_DEFINITIONS,
       ...BOSS_ROUTING_IDENTITIES,
+      ...SKILL_DEFINITIONS,
+      ...EQUIPMENT_DEFINITIONS,
+      ...ENHANCEMENT_DEFINITIONS,
     ];
     const ids = definitions.map((definition) => definition.id);
 
@@ -127,5 +136,138 @@ describe("content catalog", () => {
     expect(Object.isFrozen(catalog.listRooms())).toBe(true);
     expect(Object.isFrozen(catalog.listShopServices())).toBe(true);
     expect(Object.isFrozen(catalog.listBosses())).toBe(true);
+  });
+});
+
+describe("reward content", () => {
+  it("authors eight skills, eight equipment items, and fourteen enhancements", () => {
+    expect(SKILL_DEFINITIONS).toHaveLength(8);
+    expect(EQUIPMENT_DEFINITIONS).toHaveLength(8);
+    expect(ENHANCEMENT_DEFINITIONS).toHaveLength(14);
+    expect(createContentCatalog().listSkills()).toHaveLength(8);
+    expect(createContentCatalog().listEquipment()).toHaveLength(8);
+    expect(createContentCatalog().listEnhancements()).toHaveLength(14);
+  });
+
+  it("gives every reward definition visible labels and bounded or exact fields", () => {
+    for (const skill of SKILL_DEFINITIONS) {
+      expect(skill.id.startsWith("skill-")).toBe(true);
+      expect(skill.displayName.trim()).not.toBe("");
+      expect(skill.description.trim()).not.toBe("");
+      expect([1, 2]).toContain(skill.maxCharges);
+      expect(skill.effectKey.trim()).not.toBe("");
+      expect(skill.availability).toBe("initial");
+    }
+    for (const item of EQUIPMENT_DEFINITIONS) {
+      expect(item.id.startsWith("equipment-")).toBe(true);
+      expect(item.displayName.trim()).not.toBe("");
+      expect(item.description.trim()).not.toBe("");
+      expect(item.effectKey.trim()).not.toBe("");
+      expect(item.availability).toBe("initial");
+    }
+    for (const enhancement of ENHANCEMENT_DEFINITIONS) {
+      expect(enhancement.id.startsWith("enhancement-")).toBe(true);
+      expect(enhancement.displayName.trim()).not.toBe("");
+      expect(enhancement.description.trim()).not.toBe("");
+      expect(enhancement.effectKey.trim()).not.toBe("");
+      expect(enhancement.minDepth).toBeGreaterThanOrEqual(1);
+      expect(enhancement.minDepth).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it("keeps every skill, equipment, and enhancement ID unique and known", () => {
+    const catalog = createContentCatalog();
+    const ids = [
+      ...SKILL_DEFINITIONS.map((definition) => definition.id),
+      ...EQUIPMENT_DEFINITIONS.map((definition) => definition.id),
+      ...ENHANCEMENT_DEFINITIONS.map((definition) => definition.id),
+    ];
+
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) {
+      expect(catalog.hasContent(id)).toBe(true);
+    }
+  });
+
+  it.each(["skill", "equipment", "any"] as const)(
+    "gives at least one enhancement a %s compatibility policy",
+    (compatibleRewardType) => {
+      expect(
+        ENHANCEMENT_DEFINITIONS.some(
+          (definition) => definition.compatibleRewardType === compatibleRewardType,
+        ),
+      ).toBe(true);
+      for (const definition of ENHANCEMENT_DEFINITIONS) {
+        expect(
+          ["skill", "equipment", "any"].includes(
+            definition.compatibleRewardType,
+          ),
+        ).toBe(true);
+      }
+    },
+  );
+
+  it("keeps every enhancement effect key unique for unambiguous rolled params", () => {
+    const effectKeys = ENHANCEMENT_DEFINITIONS.map(
+      (definition) => definition.effectKey,
+    );
+    expect(new Set(effectKeys).size).toBe(effectKeys.length);
+  });
+
+  it("resolves typed lookups for skills, equipment, and enhancements", () => {
+    const catalog = createContentCatalog();
+
+    expect(catalog.getSkill(asContentId("skill-phase-shunt"))).toMatchObject({
+      ok: true,
+      value: { displayName: "Phase Shunt", maxCharges: 2 },
+    });
+    expect(
+      catalog.getEquipment(asContentId("equipment-fractal-core")),
+    ).toMatchObject({ ok: true, value: { displayName: "Fractal Core" } });
+    expect(
+      catalog.getEnhancement(asContentId("enhancement-overclocked")),
+    ).toMatchObject({
+      ok: true,
+      value: { compatibleRewardType: "skill", minDepth: 1 },
+    });
+    expect(catalog.getSkill(asContentId("skill-unknown"))).toEqual({
+      ok: false,
+      code: "unknown-content-id",
+      contentId: "skill-unknown",
+    });
+    expect(catalog.getEquipment(asContentId("equipment-unknown"))).toEqual({
+      ok: false,
+      code: "unknown-content-id",
+      contentId: "equipment-unknown",
+    });
+    expect(catalog.getEnhancement(asContentId("enhancement-unknown"))).toEqual({
+      ok: false,
+      code: "unknown-content-id",
+      contentId: "enhancement-unknown",
+    });
+  });
+
+  it("returns frozen reward-content arrays and protects them from mutation", () => {
+    const catalog = createContentCatalog();
+
+    expect(Object.isFrozen(SKILL_DEFINITIONS)).toBe(true);
+    expect(Object.isFrozen(EQUIPMENT_DEFINITIONS)).toBe(true);
+    expect(Object.isFrozen(ENHANCEMENT_DEFINITIONS)).toBe(true);
+    expect(Object.isFrozen(catalog.listSkills())).toBe(true);
+    expect(Object.isFrozen(catalog.listEquipment())).toBe(true);
+    expect(Object.isFrozen(catalog.listEnhancements())).toBe(true);
+    expect(() => {
+      (catalog.listSkills() as SkillDefinition[]).push(SKILL_DEFINITIONS[0]!);
+    }).toThrow();
+    expect(() => {
+      (catalog.listEquipment() as EquipmentDefinition[]).push(
+        EQUIPMENT_DEFINITIONS[0]!,
+      );
+    }).toThrow();
+    expect(() => {
+      (catalog.listEnhancements() as EnhancementDefinition[]).push(
+        ENHANCEMENT_DEFINITIONS[0]!,
+      );
+    }).toThrow();
   });
 });
