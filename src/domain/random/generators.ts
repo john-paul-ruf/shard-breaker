@@ -3,8 +3,12 @@ import type {
   ContentId,
   ContentVersion,
 } from "../content/catalog";
+import type { EnhancementDefinition } from "../content/enhancements";
+import type { EquipmentDefinition } from "../content/equipment";
+import type { EffectParam } from "../run/model";
 import type { RoomDefinition, RoomType } from "../content/rooms";
 import { RECOVERY_RESTORE_AMOUNT } from "../content/rooms";
+import type { SkillDefinition } from "../content/skills";
 import type { EventKey } from "./seededRng";
 import { deriveStream } from "./seededRng";
 
@@ -123,6 +127,41 @@ export interface GeneratedRoomCandidate {
   readonly recovery: GeneratedRecoveryState | null;
   readonly boss: GeneratedBossState | null;
   readonly resolutionCommitId: null;
+}
+
+/** Caller-supplied coordinates for a seeded three-card reward draft. */
+export interface RewardGenerationContext {
+  readonly seed: string;
+  readonly contentVersion: ContentVersion;
+  readonly runId: string;
+  readonly depth: number;
+  readonly cycle: number;
+  readonly roomEventKey: EventKey;
+  readonly roomType: RoomType;
+  readonly activeSkillSlotsUsed: number;
+  readonly passiveEquipmentSlotsUsed: number;
+}
+
+/** One fully revealed reward card as generated, before reducer mapping. */
+export interface GeneratedRewardCard {
+  readonly cardId: string;
+  readonly baseRewardId: ContentId;
+  readonly rewardType: "skill" | "equipment";
+  readonly enhancementIds: readonly ContentId[];
+  readonly rolledParams: readonly EffectParam[];
+  readonly materialCost: number;
+  readonly tradeoffId: ContentId | null;
+}
+
+/** The complete, deterministic reward draft for one resolved room. */
+export interface GeneratedRewardDraft {
+  readonly eventKey: EventKey;
+  readonly sourceRoomId: string;
+  readonly cards: readonly [
+    GeneratedRewardCard,
+    GeneratedRewardCard,
+    GeneratedRewardCard,
+  ];
 }
 
 export const THREAT_LIMITS = Object.freeze({
@@ -530,5 +569,178 @@ export function generateRoomCandidate(
           })
         : null,
     resolutionCommitId: null,
+  });
+}
+
+const MAX_ACTIVE_SKILL_SLOTS = 3;
+const MAX_PASSIVE_EQUIPMENT_SLOTS = 4;
+const MAX_ENHANCEMENTS_PER_CARD = 2;
+const MATERIAL_COST_SPREAD = 10;
+
+type RewardKind = "skill" | "equipment";
+
+interface RewardBaseCandidates {
+  readonly skills: readonly SkillDefinition[];
+  readonly equipment: readonly EquipmentDefinition[];
+}
+
+function requireRewardBase(
+  catalog: ContentCatalog,
+  kind: RewardKind,
+  baseRewardId: ContentId,
+): void {
+  const result = kind === "skill" ? catalog.getSkill(baseRewardId) : catalog.getEquipment(baseRewardId);
+  if (!result.ok) {
+    throw new RangeError(
+      `unknown ${kind} reward base in catalog: ${baseRewardId}`,
+    );
+  }
+}
+
+function validateRewardContext(
+  catalog: ContentCatalog,
+  context: RewardGenerationContext,
+): void {
+  validateBaseContext(catalog, context);
+  requireNonBlank(context.runId, "runId");
+  requireNonBlank(context.roomEventKey, "roomEventKey");
+  if (
+    context.roomType !== "battle" &&
+    context.roomType !== "elite" &&
+    context.roomType !== "shop" &&
+    context.roomType !== "recovery" &&
+    context.roomType !== "boss"
+  ) {
+    throw new RangeError("roomType must be an authored room type");
+  }
+  if (
+    !Number.isSafeInteger(context.activeSkillSlotsUsed) ||
+    context.activeSkillSlotsUsed < 0 ||
+    context.activeSkillSlotsUsed > MAX_ACTIVE_SKILL_SLOTS
+  ) {
+    throw new RangeError(
+      `activeSkillSlotsUsed must be a safe integer within 0..${MAX_ACTIVE_SKILL_SLOTS}`,
+    );
+  }
+  if (
+    !Number.isSafeInteger(context.passiveEquipmentSlotsUsed) ||
+    context.passiveEquipmentSlotsUsed < 0 ||
+    context.passiveEquipmentSlotsUsed > MAX_PASSIVE_EQUIPMENT_SLOTS
+  ) {
+    throw new RangeError(
+      `passiveEquipmentSlotsUsed must be a safe integer within 0..${MAX_PASSIVE_EQUIPMENT_SLOTS}`,
+    );
+  }
+}
+
+function rewardKindsFor(
+  context: RewardGenerationContext,
+): readonly RewardKind[] {
+  const kinds: RewardKind[] = [];
+  if (context.activeSkillSlotsUsed < MAX_ACTIVE_SKILL_SLOTS) {
+    kinds.push("skill");
+  }
+  if (context.passiveEquipmentSlotsUsed < MAX_PASSIVE_EQUIPMENT_SLOTS) {
+    kinds.push("equipment");
+  }
+  // Both build sides full is an authoring/flow defect: the generator keeps
+  // producing equipment cards so a draft always has three cards, while the
+  // reducer stays the authoritative guard against overfull builds.
+  return kinds.length === 0 ? ["equipment"] : kinds;
+}
+
+function enhancementCandidatesFor(
+  catalog: ContentCatalog,
+  kind: RewardKind,
+  depth: number,
+): readonly EnhancementDefinition[] {
+  return catalog
+    .listEnhancements()
+    .filter(
+      (definition) =>
+        definition.minDepth <= depth &&
+        (definition.compatibleRewardType === "any" ||
+          definition.compatibleRewardType === kind),
+    );
+}
+
+function generateRewardCard(
+  catalog: ContentCatalog,
+  context: RewardGenerationContext,
+  rewardEventKey: EventKey,
+  baseIds: RewardBaseCandidates,
+  index: number,
+): GeneratedRewardCard {
+  const cardSlotKey = `${rewardEventKey}:card:${String(index)}`;
+  const rng = deriveStream(context.seed, context.contentVersion, cardSlotKey);
+  const kind = rng.pick(rewardKindsFor(context));
+  const baseRewardId = rng.pick(kind === "skill" ? baseIds.skills : baseIds.equipment).id;
+  requireRewardBase(catalog, kind, baseRewardId);
+
+  const eligible = enhancementCandidatesFor(catalog, kind, context.depth);
+  const enhancementCount = rng.nextInt(MAX_ENHANCEMENTS_PER_CARD + 1);
+  const chosenEnhancements = rng
+    .shuffle(eligible)
+    .slice(0, enhancementCount)
+    .sort((left, right) => compareIds(left.id, right.id));
+  const rolledParams = Object.freeze(
+    chosenEnhancements.map((enhancement) => {
+      const paramRng = deriveStream(
+        context.seed,
+        context.contentVersion,
+        `${cardSlotKey}:param:${enhancement.effectKey}`,
+      );
+      return Object.freeze({
+        key: enhancement.effectKey,
+        value: paramRng.nextInt(4) + 1,
+      }) satisfies EffectParam;
+    }),
+  );
+
+  return Object.freeze({
+    cardId: `${rewardEventKey}:card:${baseRewardId}:${String(index)}`,
+    baseRewardId,
+    rewardType: kind,
+    enhancementIds: Object.freeze(
+      chosenEnhancements.map((enhancement) => enhancement.id),
+    ),
+    rolledParams,
+    materialCost: rng.nextInt(MATERIAL_COST_SPREAD),
+    tradeoffId: null,
+  });
+}
+
+/**
+ * Compose the deterministic three-card reward draft for a resolved room. Each
+ * card derives its own named stream from
+ * `(seed, contentVersion, <roomEventKey>:reward:card:<index>)` so unrelated
+ * draws cannot perturb it, and every content reference is catalog-validated.
+ */
+export function generateRewardDraft(
+  catalog: ContentCatalog,
+  context: RewardGenerationContext,
+): GeneratedRewardDraft {
+  validateRewardContext(catalog, context);
+
+  const skills = [...catalog.listSkills()].sort((left, right) =>
+    compareIds(left.id, right.id),
+  );
+  const equipment = [...catalog.listEquipment()].sort((left, right) =>
+    compareIds(left.id, right.id),
+  );
+  if (skills.length === 0 || equipment.length === 0) {
+    throw new Error("catalog has no skill and equipment reward bases");
+  }
+
+  const rewardEventKey = `${context.roomEventKey}:reward`;
+  const baseIds: RewardBaseCandidates = { skills, equipment };
+  const cards = [0, 1, 2].map((index) =>
+    generateRewardCard(catalog, context, rewardEventKey, baseIds, index),
+  );
+
+  return Object.freeze({
+    eventKey: rewardEventKey,
+    sourceRoomId: `${context.roomEventKey}:candidate`,
+    cards: Object.freeze(cards) as GeneratedRewardDraft["cards"],
   });
 }
