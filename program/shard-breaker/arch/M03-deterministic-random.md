@@ -54,6 +54,7 @@
 |------|--------|
 | 2026-08-29 | Imported Genesis M03 contract into the Forge registry. |
 | 2026-08-30 | Added v1 named streams plus deterministic route, threat, Shop, Recovery, room, and boss-routing candidates. |
+| 2026-09-15 | room-resolution SESSION-01: Added `generateRewardDraft` and the reward-draft public API; authorized type-only `EffectParam` import recorded. |
 
 <!-- deterministic-routes-and-utility-rooms SESSION-01 -->
 ## Implemented Public API and Compatibility Contract
@@ -84,3 +85,26 @@
 - Every seeded selection starts from a stable authored-ID sort. Exported
   candidate arrays and nested mutable-looking projections are frozen or
   defensively copied. M03 imports M02 only and never imports run state.
+
+<!-- room-resolution SESSION-01 -->
+## Reward draft generator API
+
+- `generators.ts` adds public `RewardGenerationContext` (`seed`,
+  `contentVersion`, `runId`, `depth`, `cycle`, `roomEventKey`, `roomType`,
+  `activeSkillSlotsUsed` 0..3, `passiveEquipmentSlotsUsed` 0..4),
+  `GeneratedRewardCard` (`cardId`, `baseRewardId`,
+  `rewardType: "skill" | "equipment"`, `enhancementIds`, `rolledParams`,
+  `materialCost` 0..9, `tradeoffId: null`), `GeneratedRewardDraft`
+  (`eventKey`, `sourceRoomId`, 3-tuple `cards`), and
+  `generateRewardDraft(catalog, context)`. Per-card streams derive from
+  `(seed, contentVersion, "<roomEventKey>:reward:card:<index>")`; per-param
+  sub-streams append `:param:<effectKey>`. Base-reward pools are ID-sorted
+  before seeded selection; all outputs frozen; contexts outside bounds throw
+  `TypeError`/`RangeError` like the existing generators.
+- **Dependency-rule delta:** `generators.ts` contains a type-only
+  `import type { EffectParam } from "../run/model"` — runtime-erased, so no
+  runtime module edge M03→M05 materializes. The "Depends on M02 only" rule
+  above now reads: M03 depends on M02 plus this one authorized type-only
+  run-model type import (CA-01's durable-field mapping), and never imports run
+  state at runtime. Orchestrator authorization recorded 2026-09-15T21:20Z
+  (`.program/decisions.md`); no value import.

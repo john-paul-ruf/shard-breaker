@@ -64,6 +64,7 @@
 |------|--------|
 | 2026-08-29 | Imported Genesis M02 contract into the Forge registry. |
 | 2026-08-30 | Added `content-1` route rooms, support IDs, bounded Integrity services, boss routing identities, and total catalog lookups. |
+| 2026-09-15 | room-resolution SESSION-01: Added reward content (8 skills, 8 equipment items, 14 enhancements) and total catalog lookups for all three types. |
 
 <!-- SESSION-02 -->
 ## M02 — Authored content catalog (`./src/domain/content/`)
@@ -103,3 +104,20 @@
   `hasContent(id)`. Construction rejects invalid/duplicate global IDs and
   missing or wrong-kind room cross-references; total lookups retain
   `ContentLookupResult<T>`.
+
+<!-- room-resolution SESSION-01 -->
+## Reward content API (room-resolution SESSION-01)
+
+- New modules `skills.ts` (`SkillDefinition` with `maxCharges` 1-2, all
+  `availability: "initial"`, frozen `SKILL_DEFINITIONS` — 8 skills),
+  `equipment.ts` (`EquipmentDefinition`, frozen `EQUIPMENT_DEFINITIONS` — 8
+  items), and `enhancements.ts` (`CompatibleRewardType =
+  "skill" | "equipment" | "any"`, `EnhancementDefinition` with `minDepth` 1-3,
+  frozen `ENHANCEMENT_DEFINITIONS` — 14 enhancements with unique `effectKey`s).
+- `catalog.ts` extends `ContentCatalog` with `listSkills()/getSkill(id)`,
+  `listEquipment()/getEquipment(id)`, and
+  `listEnhancements()/getEnhancement(id)` — frozen enumerations and total
+  `ContentLookupResult<T>` lookups. `createContentCatalog()` registers every
+  new ID in the global known-ID set (format/duplicate checked) and rejects at
+  construction: skill `maxCharges < 1`, non-integer/negative enhancement
+  `minDepth`, and duplicate enhancement `effectKey`s. No existing API changed.
