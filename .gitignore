@@ -22,13 +22,10 @@ yarn-error.log*
 
 # Test / e2e output
 /test-results/
-/playwright-report/
-/ENSO.md
-/JIKIJITSU.md
-/MU.md
-/ROSHI.md
-/ARCHITECT.md
-/DB.md
-/DESIGNER.md
-/SPEC.md
+
+# demiurge
 /.program/
+/program-agents/
+/program/shard-breaker/prompts/
+/program/shard-breaker/demiurge.yaml
+/program/shard-breaker/img-source/
