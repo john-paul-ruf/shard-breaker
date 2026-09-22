@@ -1,15 +1,15 @@
 # SESSION-03 — Room screen, reward screen, and browser journey
 
 > **Program:** Shard Breaker
-> **Feature:** room-resolution
+> **Feature:** room-resolution (completion run)
 > **Slug:** session-03
-> **Summary:** Build the RoomScreen (showing committed room state with shop/recovery interactions and combat placeholder), the RewardsScreen (3-card reward draft), and the RewardCard component, wire navigation and App routing for room/reward phases, add styles, and extend the browser e2e journey to prove the full room→reward→next-route flow persists across reload.
-> **Wave:** 3
-> **Modules:** M08, M09, M01, M10, M13
+> **Summary:** Build the RoomScreen (committed room state with shop/recovery interactions and a combat placeholder), the RewardsScreen (3-card reward draft) and RewardCard component, wire navigation and App routing for room/reward phases, add styles per the combat/rewards mocks, and extend the browser e2e journey to prove room resolution → reward draft → depth advancement durable across reload.
+> **Wave:** 2
+> **Modules:** M08 (screens), M09 (components), M10 (styles), M13 (e2e), M01 (navigation/App wiring)
 > **Depends on:** 02
 > **Concurrent with:** —
 > **Owns:** `src/ui/screens/RoomScreen.tsx`, `src/ui/screens/RoomScreen.test.tsx`, `src/ui/screens/RewardsScreen.tsx`, `src/ui/screens/RewardsScreen.test.tsx`, `src/ui/components/RewardCard.tsx`, `src/ui/components/lifecycleComponents.test.tsx`, `src/app/navigation.ts`, `src/app/App.tsx`, `src/app/App.test.tsx`, `src/styles/global.css`, `src/styles/responsive.css`, `tests/e2e/run-lifecycle.spec.ts`, `tests/e2e/indexedDb.ts`
-> **Reads:** `src/app/appStore.ts`, `src/app/commands.ts`, `src/domain/run/model.ts`, `src/domain/run/routes.ts`, `src/domain/content/catalog.ts`, `src/domain/content/skills.ts`, `src/domain/content/equipment.ts`, `src/domain/content/enhancements.ts`, `src/domain/content/rooms.ts`, `src/domain/random/generators.ts`, `src/styles/tokens.css`, `src/ui/components/AppStatusBar.tsx`, `src/ui/components/IntegrityMeter.tsx`, `src/ui/components/SaveSignal.tsx`, `src/ui/screens/RouteMapScreen.tsx`
+> **Reads:** `src/app/appStore.ts`, `src/app/commands.ts`, `src/domain/run/model.ts`, `src/domain/run/routes.ts`, `src/domain/content/catalog.ts`, `src/domain/content/skills.ts`, `src/domain/content/equipment.ts`, `src/domain/content/enhancements.ts`, `src/domain/content/rooms.ts`, `src/domain/random/generators.ts`, `src/styles/tokens.css`, `src/ui/components/AppStatusBar.tsx`, `src/ui/components/IntegrityMeter.tsx`, `src/ui/components/SaveSignal.tsx`, `src/ui/screens/RouteMapScreen.tsx`, `src/ui/screens/RouteMapScreen.test.tsx`, `program/shard-breaker/mocks/combat.html`, `program/shard-breaker/mocks/boss.html`, `program/shard-breaker/mocks/rewards.html`
 > **Resources:** `PLAYWRIGHT_PORT` (assigned by Orchestrator)
 > **Checkpoints:** 3
 
@@ -17,95 +17,94 @@
 
 | ID | Module | Read | Why |
 |----|--------|------|-----|
-| M01 | App orchestration | `src/app/appStore.ts`, `commands.ts`, `navigation.ts` | `AppCommand`/`AppState`/`AppStore` from S02; store now has room/reward handlers. |
-| M02 | Authored content | `src/domain/content/catalog.ts`, `src/domain/content/rooms.ts`, `src/domain/content/skills.ts`, `src/domain/content/equipment.ts`, `src/domain/content/enhancements.ts` | S01's new content types; `RoomDefinition` display fields; skill/equipment/enhancement display names and descriptions for reward cards. |
-| M05 | Run domain | `src/domain/run/model.ts`, `routes.ts` | `RoomState`, `RewardState`, `RewardCardSnapshot`, `BuildSnapshot`, `ShopState`, `RecoveryState` shapes; `isBossDepth`/`cycleForDepth`. |
-| M08 | Screens | `src/ui/screens/RouteMapScreen.tsx`, `src/ui/screens/HomeScreen.tsx` | Existing screen patterns (view model, dispatch, AppStatusBar, radiogroup, auto-dispatch). |
-| M09 | Components | `src/ui/components/RouteCard.tsx`, `src/ui/components/IntegrityMeter.tsx`, `src/ui/components/AppStatusBar.tsx` | Existing component patterns (accessible radio, meter, status bar). |
-| M10 | Styles | `src/styles/tokens.css`, `global.css`, `responsive.css` | Design tokens and existing responsive patterns. |
-| M13 | Browser | `tests/e2e/run-lifecycle.spec.ts`, `indexedDb.ts` | Existing e2e harness and IndexedDB reader to extend. |
+| M01 | App orchestration | `src/app/appStore.ts`, `commands.ts`, `navigation.ts` | S02's committed `room/buy-shop-item`, `room/commit-recovery`, `room/resolve`, `reward/select` commands and store handlers. |
+| M02 | Authored content | `src/domain/content/catalog.ts`, `rooms.ts`, `skills.ts`, `equipment.ts`, `enhancements.ts` | `RoomDefinition`/`ShopServiceDefinition` display fields; skill/equipment/enhancement display names/descriptions for reward cards; `BossRoutingIdentity` display fields for the boss placeholder. |
+| M05 | Run domain | `src/domain/run/model.ts`, `routes.ts` | `RoomState`, `RewardState`, `RewardCardSnapshot`, `BuildSnapshot`, `ShopState`, `RecoveryState`, `BossState` shapes; `isBossDepth`. |
+| M08/M09 | Screens/components | `src/ui/screens/RouteMapScreen.tsx`, `HomeScreen.tsx`, `src/ui/components/RouteCard.tsx`, `IntegrityMeter.tsx`, `AppStatusBar.tsx`, `SaveSignal.tsx` | Existing screen/component patterns: view model + dispatch props, roving radiogroup, status bar, save signal. |
+| M10 | Styles | `src/styles/tokens.css`, `global.css`, `responsive.css` | Design tokens; existing route-card/route-map CSS patterns to extend. |
+| M13 | Browser | `tests/e2e/run-lifecycle.spec.ts`, `indexedDb.ts` | Existing e2e harness (`appPage` fixture, `readShardbreakState`, `deleteShardbreakDatabase`) to extend. |
 
 ## Context
 
-S02 committed the pure domain transitions, persistence, and app-store handlers for `BuyShopItem`, `CommitRecovery`, `ResolveRoom`, and `SelectReward`. The store now accepts `room/buy-shop-item`, `room/commit-recovery`, `room/resolve`, and `reward/select` app commands and persists room/reward state changes. Navigation currently returns `home/checkpoint` for room-phase runs — there is no room screen.
+S02 committed the domain transitions, persistence wiring, and store handlers for `BuyShopItem`, `CommitRecovery`, `ResolveRoom`, and `SelectReward`. The store accepts the four new app commands and persists room/reward state changes atomically. Navigation currently returns `home/checkpoint` for room-phase and reward-phase runs — there is no room or reward screen (verified: `deriveScreen` in `src/app/navigation.ts` returns `CHECKPOINT_SCREEN` for any non-route phase).
 
-This session builds the visible room screen (showing the committed room with room-type-specific content), the reward screen (3-card draft), the `RewardCard` component, wires them into the application, adds navigation, styles them per the combat/rewards mocks, and extends the browser acceptance journey to prove the full room→reward→next-route journey.
+Design sources (Author handoff, read-only): `mocks/combat.html` (battle/boss room hierarchy: arena placeholder area, objective panel, Integrity, skill rail, telegraph), `mocks/boss.html` (boss identity card, phase state, counterplay, modifier chips), `mocks/rewards.html` (exactly three equal-weight cards with base reward, enhancement, effect, cost, trade-off, single-choice radiogroup, confirm bar, save note). Production CSS is bundled — translate the mocks' visual structure into semantic CSS using the existing tokens; do not import Tailwind.
 
-The combat mock (`mocks/combat.html`) shows an arena with paddle, ball, enemies, skill rail, and a "SIMULATE ROOM CLEAR" prototype link. The rewards mock (`mocks/rewards.html`) shows 3 equal-weight cards with base reward, enhancement, effect, cost, trade-off, and a confirm button. Production CSS is bundled — this session translates the mocks' visual structure into semantic CSS using the existing design tokens.
+Combat rooms (battle/elite/boss) show a "combat engine coming soon" placeholder — the combat domain (M04) and game bridge (M06) do not exist. The resolve action is disabled for combat rooms. Utility rooms (shop/recovery) are fully interactive and resolvable, proving the complete room → reward → next-route journey.
 
-For combat rooms (battle/elite/boss), the room screen shows a "combat engine coming soon" placeholder — the combat domain (M04) and game bridge (M06) do not exist. The "Advance" (resolve) action is disabled for combat rooms. Utility rooms (shop/recovery) are fully interactive and resolvable.
+**Fixture precondition for the shop browser journey (planning-authorized):** runs start with `runCurrency: 0` and no committed mechanic grants currency (combat rooms are deferred). The shop journey therefore seeds currency by rewriting the stored living-run record between app loads: write a modified record with `runCurrency: 60` into IndexedDB while the app is not connected, then load/reload the app so it parses and validates the seeded record through the production `parseRunStateRecords` path. The fixture may only change scalar fields (`runCurrency`, `integrityCurrent`) on an otherwise committed, structurally valid record; it must never invent room/reward state. Reload after seeding must render the app normally (validation accepts the record) — that acceptance is itself part of the fixture proof. This is the bounded e2e fixture authority the prior run's final report recorded as an interim disposition; it is restated here as standing authorization.
 
 ## Capabilities
 
 ### CAP-06 — Room screen
-**Integration owner:** S03-CP1. **Proof:** Commit to a shop room → RoomScreen shows shop inventory with prices, a "Buy" button per item, a "Leave shop" (resolve) button. Commit to a recovery room → RoomScreen shows recovery offer with "Commit recovery" and "Skip" (resolve) buttons. Commit to a battle room → RoomScreen shows "combat engine coming soon" with resolve disabled.
+**Approved behavior:** committing a route opens the room screen for the committed room. Shop rooms show the stored inventory with prices, per-item buy buttons, purchased state, currency readout, and a resolve action. Recovery rooms show the recovery offer with current/max Integrity, a commit-recovery action, and a resolve action. Combat rooms (battle/elite/boss) show the room identity, objectives, threat readout, and a non-interactive combat placeholder; resolve is disabled with a stated reason.
+**Entry point:** `deriveScreen` returns `{ id: "room" }` for `phase === "room"` in checkpoint mode.
+**Rejection/no-change paths:** no interaction can dispatch a command the domain would reject (buy button disabled when already purchased/insufficient currency/busy; recovery commit disabled when already committed/busy; resolve disabled for combat rooms and while busy).
+**Integration owner:** CP1 (component), CP2 (App wiring), CP3 (browser).
 
 ### CAP-07 — Reward screen
-**Integration owner:** S03-CP2. **Proof:** Resolve a room → RewardsScreen shows 3 RewardCards with base reward name, enhancement description, material cost, and trade-off. Select a card → dispatches `reward/select`. Confirm is disabled without selection.
+**Approved behavior:** after resolve, the reward screen shows exactly three `RewardCard`s with fully revealed base reward (catalog-resolved name/description), enhancement names/descriptions (catalog-resolved), material cost, and capacity guidance; cards are a single-choice radiogroup; the confirm action dispatches `reward/select` with the selected `cardId` and is disabled without a selection or while busy.
+**Entry point:** `deriveScreen` returns `{ id: "reward" }` for `phase === "reward"` in checkpoint mode.
+**Integration owner:** CP2 (component + wiring), CP3 (browser).
 
-### CAP-02/03/04/05 — Browser proofs
-**Integration owner:** S03-CP3. **Proofs:**
-- Shop: start → route map → select shop → commit → room screen → buy item → resolve → reward screen → select card → route map (depth 2) → reload preserves all state.
-- Recovery: start → route map → select recovery → commit → room screen → commit recovery → resolve → reward screen → select card → route map (depth 2) → reload preserves all state.
-- IndexedDB assertions: `phase`, `rewardState.cards` (3 cards), `depth` incremented, `routeState.offers` for new depth.
+### CAP-02..05 — Browser proofs (durability + never-reroll)
+**Integration owner:** CP3. Proofs (Chromium project, real app, IndexedDB inspected via the committed reader):
+- **Shop journey:** start run → route map → select shop → commit → room screen shows inventory → buy item → currency readout decreases → resolve → reward screen shows 3 cards → select card → confirm → route map at depth 2 with materialized offers → reload → same depth, same offers, build contains the reward, purchase still present.
+- **Recovery journey:** start run → select recovery → commit → commit recovery → integrity readout increases (or stays at max — use a run at full Integrity to prove the clamp shows "no further restore" plus the committed state) → resolve → select card → depth 2 → reload preserves state.
+- **IndexedDB assertions:** after resolve `phase === "reward"`, `rewardState.cards.length === 3`, `roomState === null`; after select `phase === "route"`, `rewardState === null`, `depth` incremented, `routeState.offers` populated for the new depth, `routeState.eventKey === route:content-1:<runId>:<newDepth>`.
+- **Reload determinism:** the reward draft is identical before and after reload (same `cardId`s — never-reroll proof for CA-01).
 
 ## Contract Agreements
 
-### CA-01 — Reward card display mapping (agreed, producer ready)
-The UI resolves display fields (displayName, description, effectKey) from the catalog by `baseRewardId` (skill or equipment) and `enhancementId`s, not from the durable `RewardCardSnapshot`. The durable snapshot carries `cardId`, `baseRewardId`, `rewardType`, `enhancementIds`, `rolledParams`, `materialCost`, `tradeoffId`.
+### CA-01 — Reward card display mapping (agreed, producer ready; display proof here)
+The durable `RewardCardSnapshot` carries `cardId`, `baseRewardId`, `rewardType`, `enhancementIds`, `rolledParams`, `materialCost`, `tradeoffId` — no display strings. The UI resolves display fields from the catalog: `catalog.getSkill(baseRewardId)` or `catalog.getEquipment(baseRewardId)` (by `rewardType`) for name/description, `catalog.getEnhancement(id)` for each enhancement's name/description, and never parses meaning from ID strings. Unknown IDs must not render fabricated text — a failed lookup renders the bounded "unknown content" treatment (and would be a defect to report, since CA-01 guarantees catalog-valid IDs).
+**Producer → consumer:** S02 reducer `RewardState.cards` (durable) → this session's `RewardsScreen`/`RewardCard` (catalog-resolved display).
+**Checkpoint-0 recheck:** read `src/domain/content/skills.ts`, `equipment.ts`, `enhancements.ts`, `catalog.ts` (`getSkill`, `getEquipment`, `getEnhancement` return `ContentLookupResult<T>`); confirm every field the cards render exists on the resolved definitions (`displayName`, `description`; enhancements also `minDepth`/`compatibleRewardType` if displayed).
 
-**Producer → consumer:** S02 `RewardCardSnapshot` (durable) → S03 `RewardsScreen`/`RewardCard` (resolves `catalog.getSkill(baseRewardId)` or `catalog.getEquipment(baseRewardId)` and `catalog.getEnhancement(id)` for display labels).
-
-**Checkpoint-0 recheck:** Read `src/domain/content/skills.ts`, `src/domain/content/equipment.ts`, `src/domain/content/enhancements.ts`, `src/domain/content/catalog.ts`. Confirm each `baseRewardId` maps to a `SkillDefinition` or `EquipmentDefinition` with display fields, and each `enhancementId` maps to an `EnhancementDefinition` with display fields.
-
-### CA-02/03/04/05 — Room interaction and resolution UX
-The room screen shows room-type-specific content. For shop rooms: inventory list with prices, buy buttons, purchased state, and a resolve button. For recovery rooms: recovery offer, commit button, and a resolve button. For combat rooms: placeholder with disabled resolve. The reward screen shows 3 cards as a radiogroup with a confirm button. Selection dispatches `reward/select`.
+### CA-02/03/04/05 — Room interaction and resolution UX (agreed; producers = S02, committed)
+Room screen dispatches exactly S02's commands: `room/buy-shop-item` (itemId from the stored inventory), `room/commit-recovery`, `room/resolve`, `reward/select` (cardId from the persisted draft). The screen renders from the durable snapshot only (`roomState.shop`, `roomState.recovery`, `rewardState.cards`) — it never regenerates or displays computed-but-unstored values (no recomputed prices, no rerolled drafts). Disabled states and reasons come from the same facts the reducer guards (CA-02: purchased/insufficient; CA-03: already committed; CA-04: combat-not-implemented; CA-05: no selection/busy). **Checkpoint-0 recheck:** read `src/app/commands.ts` for the exact command shapes S02 committed and `src/domain/run/model.ts` for `ShopState`/`RecoveryState`/`RewardState` — do not guess field names.
 
 ## Files to Create/Modify
 
 | File | Action | What Changes |
 |------|--------|--------------|
-| `src/ui/components/RewardCard.tsx` | Create | Accessible reward card: radio button with base reward name/icon, enhancement description, material cost, trade-off, selected state, disabled-when-busy. Resolves display from catalog. |
-| `src/ui/screens/RoomScreen.tsx` | Create | Room screen: status bar, room header (name, type, objectives), room-type-specific content (shop inventory / recovery offer / combat placeholder), resolve button. Dispatches `room/buy-shop-item`, `room/commit-recovery`, `room/resolve`. |
-| `src/ui/screens/RoomScreen.test.tsx` | Create | Component tests: shop room renders inventory + buy + resolve; recovery room renders offer + commit + resolve; combat room renders placeholder + disabled resolve; busy disables actions; dispatch commands. |
-| `src/ui/screens/RewardsScreen.tsx` | Create | Reward screen: status bar, draft header, radiogroup of `RewardCard`s, confirm bar with selection readout + confirm button. Dispatches `reward/select`. |
-| `src/ui/screens/RewardsScreen.test.tsx` | Create | Component tests: renders 3 cards, selection toggles aria-checked, confirm disabled without selection, confirm dispatches `reward/select`, busy disables actions. |
-| `src/ui/components/lifecycleComponents.test.tsx` | Modify | Add `RewardCard` tests: selected/unselected states, accessible name, enhancement labels, cost display, disabled state. |
-| `src/app/navigation.ts` | Modify | Add `{ id: "room" }` and `{ id: "reward" }` to `ScreenDescriptor`; extend `deriveScreen` to return them for `phase === "room"` and `phase === "reward"` in checkpoint mode. |
-| `src/app/App.tsx` | Modify | Build `RoomScreenViewModel` and `RewardsScreenViewModel` from `AppState` + catalog; render `RoomScreen` and `RewardsScreen` for the new screen descriptors. |
-| `src/app/App.test.tsx` | Modify | Add integration tests: start → route map → select shop → commit → room screen visible → buy item → resolve → reward screen → select card → route map (depth 2). Add `deriveScreen` tests for room/reward phases. |
-| `src/styles/global.css` | Modify | Add `.room-screen`, `.room-shop`, `.shop-item`, `.room-recovery`, `.room-combat-placeholder`, `.reward-screen`, `.reward-cards`, `.reward-card`, `.reward-card--selected`, `.reward-confirm-bar` styles using tokens. |
-| `src/styles/responsive.css` | Modify | Room/reward responsive rules: shop grid reflow, reward cards 3→1 column, confirm bar stacking. |
-| `tests/e2e/run-lifecycle.spec.ts` | Modify | Add `test.describe("room resolution")` block: shop room full journey, recovery room full journey, IndexedDB assertions for reward state and depth advancement. |
-| `tests/e2e/indexedDb.ts` | Modify | Extend `StoredLivingRunRecord` with `rewardState` fields (cards, selectedCardId, status) for the reward proof. |
+| `src/ui/components/RewardCard.tsx` | Create | Accessible reward card: `<button role="radio" aria-checked>` with base reward glyph/name/description (resolved by caller from catalog), enhancement list, material cost, capacity note, selected state, disabled-when-busy, 44px target, visible focus. |
+| `src/ui/screens/RoomScreen.tsx` | Create | Room screen: status bar, room header (name/type/depth/objectives/threat), shop inventory list with buy buttons, recovery offer with commit button, combat placeholder, resolve ("Advance to reward draft") action. |
+| `src/ui/screens/RoomScreen.test.tsx` | Create | Component tests for the three room kinds, busy disabling, dispatch correctness. |
+| `src/ui/screens/RewardsScreen.tsx` | Create | Reward screen: status bar, draft header with capacity and determinism note, radiogroup of 3 `RewardCard`s, confirm bar with selection readout + confirm button. |
+| `src/ui/screens/RewardsScreen.test.tsx` | Create | Component tests: 3 cards, catalog-resolved names, selection state, confirm dispatch, busy disabling. |
+| `src/ui/components/lifecycleComponents.test.tsx` | Modify | Add `RewardCard` tests (selected/unselected, accessible name, enhancement labels, cost, disabled). |
+| `src/app/navigation.ts` | Modify | Extend `ScreenDescriptor` with `{ id: "room" }` and `{ id: "reward" }`; `deriveScreen` returns them for the room/reward phases in checkpoint mode. |
+| `src/app/App.tsx` | Modify | Add `createRoomModel` / `createRewardsModel` (state + catalog → view models); render `RoomScreen` / `RewardsScreen` for the new descriptors with the existing `ErrorShell` fallback pattern. |
+| `src/app/App.test.tsx` | Modify | Extend `deriveScreen` tests for room/reward; add full integration journeys via the memory repository (shop and recovery room → reward → depth 2 route map). |
+| `src/styles/global.css` | Modify | Room screen styles (`.room-screen`, `.room-header`, `.room-objectives`, `.room-shop`, `.shop-item`, `.shop-item--purchased`, `.room-recovery`, `.room-combat-placeholder`, `.room-actions`) and reward styles (`.reward-screen`, `.reward-header`, `.reward-cards`, `.reward-card` + modifiers, `.reward-confirm-bar`) using existing tokens; non-color state signals. |
+| `src/styles/responsive.css` | Modify | Room/reward responsive rules: cards 3→1 column, shop grid reflow, bars stack, reduced-motion (no hover transforms). |
+| `tests/e2e/indexedDb.ts` | Modify | Extend `StoredLivingRunRecord` with `rewardState` (cards length, selectedCardId, status, cardIds) and `build` fields; add a bounded `seedCurrency` helper that rewrites the stored record's scalar `runCurrency` between app loads (structural validation still runs on reload). |
+| `tests/e2e/run-lifecycle.spec.ts` | Modify | Add `test.describe("room resolution")` block: shop journey, recovery journey, IndexedDB assertions, reload determinism. |
 
 ## Implementation
 
 ### Checkpoint 1 — RewardCard component and RoomScreen
 
-Read before create: `src/domain/content/skills.ts`, `src/domain/content/equipment.ts`, `src/domain/content/enhancements.ts`, `src/domain/content/catalog.ts`, `src/domain/content/rooms.ts`, `src/domain/run/model.ts`, `src/ui/components/RouteCard.tsx` (accessible radio pattern), `src/ui/components/IntegrityMeter.tsx`, `src/styles/tokens.css`, `mocks/combat.html`, `mocks/rewards.html`.
+Read before create: `src/domain/content/skills.ts`, `equipment.ts`, `enhancements.ts`, `rooms.ts`, `catalog.ts`, `src/domain/run/model.ts` (`RewardCardSnapshot`, `ShopState`, `RecoveryState`, `RoomState`, `BossState`), `src/ui/components/RouteCard.tsx` (accessible radio + keyboard roving pattern), `IntegrityMeter.tsx`, `SaveSignal.tsx`, `src/styles/tokens.css`, `mocks/combat.html`, `mocks/rewards.html`, `mocks/boss.html`.
 
-1. **Create `src/ui/components/RewardCard.tsx`**:
+1. **Create `src/ui/components/RewardCard.tsx`** — display strings are resolved by the caller (the screen), not inside the component; the component takes resolved props:
    ```typescript
    export interface RewardCardProps {
      readonly card: RewardCardSnapshot;
-     readonly baseRewardName: string;      // resolved from catalog
+     readonly baseRewardName: string;
      readonly baseRewardDescription: string;
-     readonly enhancementNames: readonly string[];
-     readonly enhancementDescriptions: readonly string[];
+     readonly enhancements: readonly { readonly name: string; readonly description: string }[];
+     readonly capacityNote: string;        // e.g. "Fits active slot 2 / 3"
      readonly isSelected: boolean;
      readonly isBusy: boolean;
      readonly onSelect: () => void;
    }
    ```
-   - Render a `<button type="button" role="radio" aria-checked={isSelected}>`.
-   - Reward icon: a glyph derived from `rewardType` (◇ for skill, + for equipment).
-   - Reward name: `baseRewardName`; description: `baseRewardDescription`.
-   - Enhancement section: list `enhancementNames` and `enhancementDescriptions`.
-   - Material cost: `card.materialCost` formatted as "N room shards".
-   - Trade-off: `card.tradeoffId` (null for initial build — show "No trade-off" or omit).
-   - `className` includes `reward-card reward-card--{rewardType}` and `reward-card--selected` when selected.
-   - Disabled when `isBusy`; `aria-disabled` set. Minimum 44px target; visible focus ring.
+   - `<button type="button" role="radio" aria-checked={isSelected}>`; accessible name built from base reward name + enhancement names (e.g. `"Reward card 01 // Prism Burst"` — keep names in the accessible name, not only visually).
+   - Material cost: `card.materialCost` formatted as a bounded "N room shards" readout; `tradeoffId === null` renders "No trade-off" (truthful for the initial build).
+   - `className` includes `reward-card reward-card--{rewardType}` plus `reward-card--selected`; selected state is border + check mark + text, never color alone.
+   - Disabled when `isBusy`; keyboard roving pattern as in `RouteCard`.
 
 2. **Create `src/ui/screens/RoomScreen.tsx`**:
    ```typescript
@@ -115,16 +114,20 @@ Read before create: `src/domain/content/skills.ts`, `src/domain/content/equipmen
      readonly depth: number;
      readonly cycle: number;
      readonly roomType: RoomType;
-     readonly roomName: string;          // from catalog RoomDefinition
+     readonly roomName: string;             // from catalog RoomDefinition by roomType
      readonly roomSummary: string;
+     readonly roomCounterplay: string;
      readonly objectiveIds: readonly ContentId[];
      readonly threatProfile: ThreatProfileSnapshot | null;
      readonly integrityCurrent: number;
      readonly integrityMaximum: number;
      readonly runCurrency: number;
      readonly shop: ShopState | null;
+     readonly shopServices: ReadonlyMap<ContentId, ShopServiceDefinition>;
      readonly recovery: RecoveryState | null;
      readonly boss: BossState | null;
+     readonly bossIdentityName: string | null;   // catalog.getBoss(archetypeId).displayName
+     readonly bossIdentityLabel: string | null;
      readonly roomStatus: "ready" | "in_progress" | "resolved";
      readonly isBusy: boolean;
      readonly saveSignal: SaveSignalView;
@@ -134,27 +137,26 @@ Read before create: `src/domain/content/skills.ts`, `src/domain/content/equipmen
      readonly dispatch: (command: AppCommand) => void;
    }
    ```
-   - Render `AppStatusBar` with active run context.
-   - Room header: room name, type label, depth/cycle, objectives.
-   - **Shop room content:** inventory list. Each item shows `ShopServiceDefinition` display name, price, purchased state. "Buy" button per item → `dispatch({ type: "room/buy-shop-item", itemId })`. Disabled if already purchased, insufficient currency, or busy.
-   - **Recovery room content:** recovery offer. Show `restoreAmount`, current/max Integrity (using `IntegrityMeter`). "Commit recovery" button → `dispatch({ type: "room/commit-recovery" })`. Disabled if already committed or busy.
-   - **Combat room content (battle/elite/boss):** "Combat engine coming soon" placeholder. No buy/commit/resolve actions enabled.
-   - **Resolve button** ("Advance to reward draft"): `dispatch({ type: "room/resolve" })`. Disabled for combat rooms, disabled when busy, disabled when room is resolved.
+   - `AppStatusBar` with active-run context; room header with `roomName`, type label, depth/cycle; objectives rendered from catalog (`objectiveIds` → `catalog.getRoom`-resolved definitions passed in the view model as a resolved list if needed — resolve display names in `App.tsx`, not in the screen).
+   - **Shop content:** one row per `shop.inventory` item: service display name + description from `shopServices`, price, `purchasedItemIds` state ("PURCHASED"), buy button `dispatch({ type: "room/buy-shop-item", itemId })` disabled when purchased, `price > runCurrency`, or busy. Currency readout `runCurrency`.
+   - **Recovery content:** offer text (`restoreAmount`), `IntegrityMeter`, commit button `dispatch({ type: "room/commit-recovery" })` disabled when `recovery.committed` or busy (label switches to "Recovery committed" when true — truthful, non-color-only).
+   - **Combat content (battle/elite/boss):** room identity + objectives + threat readout (from `threatProfile`) + `boss` identity for boss rooms + a clearly-labeled "Combat engine coming soon" placeholder; resolve disabled with an `aria-describedby` reason; buy/commit controls absent.
+   - **Resolve action** ("Advance to reward draft"): `dispatch({ type: "room/resolve" })`; disabled for combat rooms and when busy.
 
-3. **Create `RoomScreen.test.tsx`**: Component tests using mock dispatch:
-   - Shop room: renders inventory items with prices, buy button dispatches `room/buy-shop-item`, purchased items show as purchased, resolve button dispatches `room/resolve`.
-   - Recovery room: renders recovery offer, commit button dispatches `room/commit-recovery`, resolve button dispatches `room/resolve`.
-   - Combat room: renders "combat engine coming soon", resolve button is disabled.
-   - Busy disables all actions.
-   - Room name resolves from catalog by `roomType`.
+3. **Create `src/ui/screens/RoomScreen.test.tsx`** (`// @vitest-environment jsdom`, pattern of `RouteMapScreen.test.tsx`; construct models from the real `createContentCatalog()` + hand-built `RoomState` fixtures):
+   - Shop room renders inventory items with names/prices from the catalog services; buy button dispatches `room/buy-shop-item` with the itemId; purchased items show as purchased and disabled; currency readout rendered; resolve dispatches `room/resolve`.
+   - Recovery room renders the offer; commit dispatches `room/commit-recovery`; committed state disables the commit and labels it truthfully; resolve dispatches `room/resolve`.
+   - Combat room (battle and boss fixtures): placeholder text visible, no buy/commit controls, resolve disabled with the reason.
+   - Busy disables all actions and no dispatch occurs on click.
+   - Boss room renders the boss identity name/label from catalog.
 
-4. **Add `RewardCard` tests** to `lifecycleComponents.test.tsx`: selected/unselected `aria-checked`, accessible name includes reward name, enhancement labels visible, material cost visible, disabled when busy, click invokes `onSelect`.
+4. **Add `RewardCard` tests** to `lifecycleComponents.test.tsx`: selected/unselected `aria-checked`, accessible name includes the reward name, enhancement names/descriptions visible, material cost visible, disabled when busy, click invokes `onSelect`.
 
-**Commit when:** `npm run typecheck && npm run test:unit -- src/ui/screens/RoomScreen.test.tsx src/ui/components/lifecycleComponents.test.tsx` pass. `RewardCard` and `RoomScreen` render accessible, catalog-resolved content with correct dispatch.
+**Commit when:** `npm run typecheck && npm run test:unit -- src/ui/screens/RoomScreen.test.tsx src/ui/components/lifecycleComponents.test.tsx` passes. `RewardCard` and `RoomScreen` render accessible, catalog-resolved content with correct dispatch.
 
-### Checkpoint 2 — RewardsScreen, App wiring, and navigation
+### Checkpoint 2 — RewardsScreen, navigation, App wiring, integration
 
-Read before modify: `src/app/App.tsx`, `src/app/App.test.tsx`, `src/app/navigation.ts`, `src/app/appStore.ts`, `src/ui/screens/RouteMapScreen.tsx`, `mocks/rewards.html`.
+Read before modify: `src/app/App.tsx`, `App.test.tsx`, `src/app/navigation.ts`, `src/app/appStore.ts` (command shapes), `src/ui/screens/RouteMapScreen.tsx` (composition pattern), `mocks/rewards.html`.
 
 1. **Extend `navigation.ts`**:
    ```typescript
@@ -165,7 +167,7 @@ Read before modify: `src/app/App.tsx`, `src/app/App.test.tsx`, `src/app/navigati
      | { readonly id: "room" }
      | { readonly id: "reward" };
    ```
-   `deriveScreen`: if `phase === "room"` in checkpoint mode → return `{ id: "room" }`. If `phase === "reward"` in checkpoint mode → return `{ id: "reward" }`. Otherwise fall through to existing logic.
+   `deriveScreen`: in checkpoint mode with a living run — `phase === "route"` → existing logic (route-map when offers exist, else home/checkpoint); `phase === "room"` → `{ id: "room" }`; `phase === "reward"` → `{ id: "reward" }`. Order the phase checks before the existing route-phase branch and keep the archive fallbacks unchanged. Note: `home/checkpoint` remains reachable only when the route phase has no offers yet — the room and reward phases now have their own screens.
 
 2. **Create `src/ui/screens/RewardsScreen.tsx`**:
    ```typescript
@@ -178,87 +180,78 @@ Read before modify: `src/app/App.tsx`, `src/app/App.test.tsx`, `src/app/navigati
      readonly selectedCardId: string | null;
      readonly isBusy: boolean;
      readonly saveSignal: SaveSignalView;
-     readonly catalog: ContentCatalog;  // for resolving display fields
+     readonly resolvedCards: ReadonlyMap<string, {
+       readonly name: string;
+       readonly description: string;
+       readonly enhancements: readonly { readonly name: string; readonly description: string }[];
+       readonly capacityNote: string;
+     }>;
    }
    export interface RewardsScreenProps {
      readonly model: RewardsScreenViewModel;
      readonly dispatch: (command: AppCommand) => void;
    }
    ```
-   - Render `AppStatusBar` with active run context.
-   - Draft header: "Draft the signal", depth/cycle, "Three outcomes. One pick." seed/determinism note.
-   - Radiogroup of `RewardCard`s (3 cards). `onSelect` → `dispatch({ type: "reward/select", cardId: card.cardId })`.
-   - Confirm bar: selection readout (selected card name), "Confirm draft" button → `dispatch({ type: "reward/select", cardId: selectedCardId })` (or a separate confirm action if the model requires two steps — check S02's `SelectReward`: it selects and applies in one command, so the confirm IS the select). Disabled if no selection or busy.
-   - Resolve display fields from catalog: `catalog.getSkill(baseRewardId)` or `catalog.getEquipment(baseRewardId)` for name/description; `catalog.getEnhancement(id)` for each enhancement.
+   - Draft header per the mock: heading ("Draft the signal."), capacity readout (`N / 3 active · N / 4 passive` from the living run's build), and the determinism note ("Three outcomes. One pick." + "seeded · no reroll on refresh").
+   - Radiogroup of exactly three `RewardCard`s (`reward/select` dispatch carries the `cardId`).
+   - Confirm bar: selected card name readout; "Confirm draft" button dispatches `{ type: "reward/select", cardId: selectedCardId }` (S02's `SelectReward` selects and applies in one command — confirm IS select); disabled without selection or when busy; `aria-describedby` with the disabled reason.
+   - `SaveSignal` for committed/rejected feedback.
 
-3. **Modify `App.tsx`**: Add `createRoomModel` and `createRewardsModel` functions. Build the view models from `AppState` + catalog. Render `<RoomScreen>` for `{ id: "room" }` and `<RewardsScreen>` for `{ id: "reward" }`.
+3. **Modify `App.tsx`**: add `createRoomModel(state, catalog)` and `createRewardsModel(state, catalog)` following `createRouteMapModel` (fail with a bounded message when the living run/room/reward state is missing rather than rendering a blank screen); resolve catalog display data (`roomName` via `catalog.listRooms().find(roomType)`, shop services map, boss identity, reward card names/enhancements, capacity notes from build lengths) and render `<RoomScreen>` / `<RewardsScreen>` for the new descriptors with the existing `ErrorShell` fallback.
 
-4. **Create `RewardsScreen.test.tsx`**: Component tests:
-   - Renders 3 reward cards.
-   - Card names resolve from catalog (skill/equipment display names).
-   - Selection toggles `aria-checked`.
-   - Confirm dispatches `reward/select`.
-   - Busy disables all actions.
+4. **Create `src/ui/screens/RewardsScreen.test.tsx`**: renders 3 cards; card names resolve from the catalog fixtures (assert a known skill name and a known equipment name from `SKILL_DEFINITIONS`/`EQUIPMENT_DEFINITIONS` — e.g. "Prism Burst", "Fractal Core"); selection toggles `aria-checked`; confirm disabled without selection; confirm dispatches `reward/select` with the selected `cardId`; busy disables all actions; capacity note reflects the passed build counts.
 
-5. **Modify `App.test.tsx`**: Add integration test: start → route map → select shop → commit → room screen → buy item → resolve → reward screen → 3 cards visible → select card → route map (depth 2) with new offers. Add `deriveScreen` tests for room and reward phases.
+5. **Extend `src/app/App.test.tsx`**: extend the `deriveScreen` describe block with room-phase (`{ id: "room" }`) and reward-phase (`{ id: "reward" }`) assertions (reuse the existing `state()`/`makeLivingRun` helpers with hand-built phase state). Add integration tests through the real store + memory repository: start → route map → select shop → commit → room screen visible (shop inventory rendered) → buy → resolve → reward screen visible (3 cards) → select + confirm → route map at depth 2 with new offers. Repeat an abbreviated recovery journey. Note the memory repository in this file already implements all five lifecycle methods including `saveCheckpoint`.
 
-6. **Run**: `npm run typecheck && npm run test:unit` (all tests must pass).
+6. **Run**: `npm run typecheck && npm run test:unit` (full suite must pass).
 
-**Commit when:** `npm run typecheck && npm run test:unit` passes (all 244+ tests). `RewardsScreen` renders, selects, and confirms through the real store. Navigation routes to room and reward screens.
+**Commit when:** `npm run typecheck && npm run test:unit` passes (all tests, 260+ existing plus new). Navigation routes room/reward phases to the new screens; the store-driven integration journeys pass.
 
 ### Checkpoint 3 — Styles and browser journey
 
-Read before modify: `src/styles/global.css`, `src/styles/responsive.css`, `tests/e2e/run-lifecycle.spec.ts`, `tests/e2e/indexedDb.ts`, `mocks/combat.html`, `mocks/rewards.html`.
+Read before modify: `src/styles/global.css` (route-map/route-card sections as the pattern), `responsive.css`, `tests/e2e/run-lifecycle.spec.ts`, `tests/e2e/indexedDb.ts`, `mocks/combat.html`, `mocks/rewards.html`, `mocks/boss.html`.
 
-1. **Add room styles to `global.css`**: `.room-screen`, `.room-header`, `.room-objectives`, `.room-shop`, `.shop-item`, `.shop-item--purchased`, `.room-recovery`, `.room-combat-placeholder`, `.room-actions` using tokens. Shop items show price, purchased state (disabled, checkmark), buy button. Recovery shows offer text and commit button. Combat placeholder shows muted message.
+1. **Room styles in `global.css`**: `.room-screen`, `.room-header`, `.room-objectives`, `.room-shop`, `.shop-item` (grid: name/description/price/action), `.shop-item--purchased` (disabled + check), `.room-recovery`, `.room-combat-placeholder` (muted, dashed border), `.room-actions`. Use `--color-*`, `--space-*`, `--radius-*`, `--font-mono` tokens; state via border/attribute/text, never color alone.
 
-2. **Add reward styles to `global.css`**: `.reward-screen`, `.reward-header`, `.reward-cards` (grid `repeat(3, 1fr)`), `.reward-card` (flex column, border, radius `--radius-card`), `.reward-card--selected` (cyan border + glow), `.reward-card--skill/equipment` (accent via token), `.reward-card__enhancement`, `.reward-confirm-bar`. Color is never the only state signal (selected also has border + `aria-checked`).
+2. **Reward styles in `global.css`**: `.reward-screen`, `.reward-header`, `.reward-cards` (grid `repeat(3, 1fr)`), `.reward-card` (flex column, 1px border, radius `--radius-card`), `.reward-card--selected` (cyan border + `--glow-cyan` + check mark), `.reward-card--skill` / `.reward-card--equipment` (accent via signal tokens), `.reward-card__enhancement` (left magenta rule per mock), `.reward-confirm-bar`.
 
-3. **Add responsive rules to `responsive.css`**:
-   - `@media (max-width: 980px)`: reward cards → `repeat(3, minmax(220px, 1fr))` with horizontal scroll if needed; room shop grid → 2 columns.
-   - `@media (max-width: 620px)`: reward cards → `1fr` stacked; room shop → `1fr`; confirm/resolve bars stack vertically.
-   - `@media (prefers-reduced-motion: reduce)`: no card hover transforms.
+3. **Responsive rules in `responsive.css`**: `@media (max-width: 980px)` — reward cards `repeat(3, minmax(220px, 1fr))` with horizontal scroll allowance; shop grid 2 columns. `@media (max-width: 620px)` — reward cards and shop items stack to `1fr`; confirm/resolve bars stack vertically; 44px targets preserved. `@media (prefers-reduced-motion: reduce)` — no card hover transforms; static borders/labels persist.
 
-4. **Extend `tests/e2e/indexedDb.ts`**: Add `rewardState` fields to `StoredLivingRunRecord`: `rewardState` (nullable, with `cards` length, `selectedCardId`, `status`).
+4. **Extend `tests/e2e/indexedDb.ts`**: add `rewardState` (nullable: `cards` array of `{ cardId, baseRewardId, rewardType }`, `selectedCardId`, `status`) and `build` (`activeSkillIds`, `passiveEquipmentIds`) to `StoredLivingRunRecord`; add `seedLivingRunCurrency(page, amount)` — a bounded helper that opens the DB outside the app's connection, reads `livingRun[current]`, rewrites **only** `runCurrency` (and optionally `integrityCurrent`) on the parsed record, writes it back, and closes; document that the helper runs between app loads only and that reload validation through the production parser is part of the fixture contract.
 
-5. **Extend `tests/e2e/run-lifecycle.spec.ts`**: Add a `test.describe("room resolution")` block:
-   - **Shop journey:** Start a Circuit Rogue run → route map → select Shop card → commit → room screen visible → buy "Integrity Patch" → resolve room → reward screen visible → 3 cards → select first card → route map for depth 2 → reload → same depth, same offers, build has the selected reward.
-   - **Recovery journey:** Start → route map → select Recovery → commit → room screen → commit recovery → resolve → reward screen → select card → route map (depth 2) → reload → integrity restored, depth advanced.
-   - **IndexedDB assertions:** After resolve, `livingRun[current]` has `phase: "reward"`, `rewardState.cards` length 3, `roomState: null`. After select, `phase: "route"`, `rewardState: null`, `depth` incremented, `routeState.offers` for new depth.
+5. **Extend `tests/e2e/run-lifecycle.spec.ts`** with a `test.describe("room resolution")` block using the existing `appPage` fixture and helpers (`startCircuitRogue`):
+   - **Shop journey:** start → wait for route cards → select the shop card → commit → room screen (heading + inventory + "Integrity Patch" row) → reseed currency via the reload fixture if needed → buy "Integrity Patch" → currency readout reflects the deduction → resolve → reward screen with 3 cards → select the first card → confirm → route map heading at depth 2 → IndexedDB: `phase: "route"`, `depth: 2`, `routeState.eventKey` matches `route:content-1:<runId>:2`, offers length 4, build contains the selected `baseRewardId`, `runCurrency` decreased, purchase in `roomState`... (note: roomState is nulled after resolve — assert the purchase's durable trace via the pre-resolve read instead) → reload → resume → same depth/offers/build.
+   - **Recovery journey:** start → select recovery → commit → commit recovery → integrity readout unchanged at max (clamp proof: full-integrity run stays at max, "Recovery committed" state persists) → resolve → reward screen → select + confirm → depth 2 → reload preserves.
+   - **Reload determinism:** after resolve, read `rewardState.cards` cardIds → reload → resume → the reward screen shows the same cardIds (never-reroll proof for CA-01) — fold into the shop journey or a dedicated test.
+   - **Combat placeholder:** select battle → commit → room screen shows the placeholder and a disabled resolve (assert `aria-disabled`/`disabled` + the reason text).
+   - Keep every assertion on roles/names and committed IndexedDB state per the M13 rules; each test gets its own isolated `appPage` context (the fixture deletes the DB per test).
 
 6. **Run the full gate**: `npm run verify` (must pass).
 
-7. **Run e2e**: `PLAYWRIGHT_PORT=<assigned> npm run test:e2e -- --project=chromium`.
-   - If it passes → record as `verified` in STATE.md.
-   - If localhost binding fails → record as `unverified` with cause; unit/build gate still passes.
+7. **Run e2e**: `PLAYWRIGHT_PORT=<assigned> npm run test:e2e -- --project=chromium`. If localhost binding fails environmentally, record `unverified` with the exact error and keep the unit/build gate as the landed proof — but try the assigned port first; the route-drafting run bound localhost successfully.
 
-**Commit when:** `npm run verify` passes. E2e executed and result recorded (verified or unverified-with-cause). Styles pass Stylelint.
+**Commit when:** `npm run verify` passes; e2e executed and its result recorded (verified or unverified-with-cause); styles pass Stylelint.
 
 ## Verification
 
-**PROGRAM-CONFIG commands (resolved against Verification Baseline):**
-- `npm run verify` — lint + typecheck + unit/component + build. **Must pass at CP2 and CP3.**
-- `npm run test:unit -- src/ui/screens/RoomScreen.test.tsx` — room screen tests. **Must pass at CP1.**
-- `npm run test:unit -- src/ui/screens/RewardsScreen.test.tsx` — reward screen tests. **Must pass at CP2.**
-- `npm run test:unit -- src/ui/components/lifecycleComponents.test.tsx` — component tests. **Must pass at CP1.**
-- `npm run test:unit -- src/app/App.test.tsx` — integration. **Must pass at CP2.**
-- `PLAYWRIGHT_PORT=<assigned> npm run test:e2e -- --project=chromium` — browser journey. **CP3.** Record actual result.
+**PROGRAM-CONFIG commands (resolved against STATE.md Verification Baseline):**
+- `npm run verify` — **must pass at CP2 and CP3.**
+- `npm run typecheck && npm run test:unit -- src/ui/screens/RoomScreen.test.tsx src/ui/components/lifecycleComponents.test.tsx` — **CP1.**
+- `npm run test:unit -- src/ui/screens/RewardsScreen.test.tsx` and `-- src/app/App.test.tsx` — **CP2.**
+- `PLAYWRIGHT_PORT=<assigned> npm run test:e2e -- --project=chromium` — **CP3.** Playwright 1.62 starts Vite (`npm run dev`) on the assigned port with `--strictPort`; this is a dev-server build of the current source revision (freshness note for the evidence record).
 
 **Integration proofs (CAP/CA):**
-- CAP-06 browser proof (S03-CP3): e2e asserts room screen shows shop inventory / recovery offer / combat placeholder.
-- CAP-07 browser proof (S03-CP3): e2e asserts reward screen shows 3 cards, selection dispatches, confirm advances.
-- CAP-02 browser proof (S03-CP3): e2e asserts shop purchase deducts currency (IndexedDB `runCurrency` decreased).
-- CAP-03 browser proof (S03-CP3): e2e asserts recovery commit restores integrity (IndexedDB `integrityCurrent` increased).
-- CAP-04 browser proof (S03-CP3): e2e asserts resolve transitions to reward phase (IndexedDB `phase: "reward"`, `rewardState.cards` length 3).
-- CAP-05 browser proof (S03-CP3): e2e asserts reward selection advances depth (IndexedDB `depth` incremented, `phase: "route"`, `routeState.offers` for new depth), surviving reload.
-- CA-01 display mapping proof (S03-CP1): `RewardsScreen.test.tsx` asserts card names resolve from catalog by `baseRewardId`.
+- CAP-06 (CP1 component / CP2 wiring / CP3 browser): shop inventory + buy, recovery offer + commit, combat placeholder + disabled resolve all render from durable state and dispatch S02's commands; e2e asserts the real screens.
+- CAP-07 (CP2 / CP3): exactly 3 catalog-resolved cards, radiogroup selection, confirm dispatch; e2e asserts the reward screen on the real journey.
+- CAP-02 browser proof (CP3): purchase decreases `runCurrency` in IndexedDB and survives reload.
+- CAP-03 browser proof (CP3): recovery commit persists `recovery.committed`/`commitId` and the clamp behavior (integrity stays ≤ max).
+- CAP-04 browser proof (CP3): resolve → `phase: "reward"`, `rewardState.cards` length 3, `roomState: null`; reload returns the same draft (CA-01 never-reroll).
+- CAP-05 browser proof (CP3): select → `phase: "route"`, `depth` incremented, `routeState.offers` for the new depth, build contains the reward; all surviving reload.
+- CA-01 display proof (CP1/CP2): component tests assert catalog-resolved names (`getSkill`/`getEquipment`/`getEnhancement`), not snapshot copies; the CP3 reload determinism test is the durability proof.
+- CA-02..05 UI-contract proof (CP1/CP2): disabled states and dispatch payloads match the reducer guards and command shapes from S02.
 
-**Build freshness:** The `webServer.command` (`npm run dev -- --host 127.0.0.1 --port <port> --strictPort`) builds the current source revision via Vite dev server. The e2e test loads `http://127.0.0.1:<port>/`.
+**Build freshness:** e2e serves `npm run dev -- --host 127.0.0.1 --port <port> --strictPort` from the current working tree — record the served revision identity (commit + test count) with the evidence. No preview server is involved.
 
 ## State Update
 
-After CP3, update STATE.md:
-- Session 03 status → `done`, checkpoint → 3.
-- CAP-02/03/04/05/06/07 → `verified` (if e2e passed) or `planned` with browser proof `unverified` (if e2e blocked by environment). Unit proofs remain `verified`.
-- CA-01/02/03/04/05 proof → `verified` (unit + e2e status).
-- Record actual test counts, e2e result, any surprises.
+After CP3, report through the Handoff section (Orchestrator updates STATE.md): session 03 `done` at checkpoint 3; CAP-02..05 browser proofs `verified` (or `unverified` with cause if localhost binding fails); CAP-06/07 `verified`; CA-01 durability proof `verified` if the reload determinism test landed; record test counts, e2e result, port, and any surprises.

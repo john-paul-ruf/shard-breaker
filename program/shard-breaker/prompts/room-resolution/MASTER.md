@@ -54,9 +54,32 @@ files. Coder commits its own lease at every checkpoint. See ./ORCHESTRATOR.md an
   debt and continue.
 
 ## Final Report
+Write it to `program/shard-breaker/prompts/room-resolution/FINAL-REPORT.md` — the run folder, beside
+MASTER.md and STATE.md — and commit it with an explicit pathspec before returning. Never
+`.program/`: that is gitignored scratch and publishes nothing. The committed file is what
+ends the run; a final message alone does not.
+
 Summary, sessions done/total, files created/modified, architecture impact,
 verification, residual gap, follow-up.
 
 Under Orchestrator, the Orchestration section is appended (concurrency,
 wall clock, checkpoints committed by Coder, lease violations, checkpoint
 shortfalls, granularity feedback for Planner). See ./ORCHESTRATOR.md.
+
+## Continuation-run notes (2026-09-15)
+
+- This run completes the room-resolution feature. SESSION-01 was completed in the
+  prior run (commits `6b55327`, `ad5b08b`; arch M02/M03 fragments consumed at `1fcb139`)
+  and is recorded as `done` in STATE.md — do not re-run it.
+- SESSION-02 and SESSION-03 were replanned by Planner on 2026-09-15 after the prior
+  run was blocked pre-dispatch by a runtime spawn-validator seam. The replanned
+  SESSION-02 prompt **supersedes the prior SESSION-02 prompt**: the
+  `invalid-empty-route-depth` persistence rule is KEPT (STATE.md CA-06), and no
+  session leases persistence paths. A Coder reading both prompts must follow the
+  current prompt and its "superseded instruction warning".
+- Pre-dispatch environment note: stale prunable worktree registrations exist under
+  `.git/worktrees/` (SESSION-01, SESSION-02, planner/root entries). The prior run's
+  spawn validator refused dispatch while they persisted. Prune them (or confirm the
+  validator no longer consults them) before dispatching SESSION-02.
+- Baseline at plan HEAD `86e6ee8`, re-verified by Planner: `npm run typecheck`
+  exit 0; `npm run test:unit` 260 passed / 13 files.
