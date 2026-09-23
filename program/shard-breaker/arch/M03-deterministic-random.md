@@ -1,5 +1,10 @@
 # M03 — Deterministic Random Generation
 
+> **Registry note:** This deep file's ID **M03** matches the PROGRAM-CONFIG
+> Module Registry row M02 (Seeded generation, `src/domain/random/`). This file
+> belongs to the archived per-module deep-file numbering (M01–M13); sessions
+> and STATE.md use the registry IDs (M01–M08).
+
 ## Boundary
 
 - **Path:** `./src/domain/random/`
@@ -15,6 +20,7 @@
 - `SeededRng`
 - `deriveStream(seed, contentVersion, eventKey)`
 - `generateRouteOptions()`
+- `generateRoomCandidate()`
 - `generateRewardDraft()`
 - `generateShopInventory()`
 - `generateThreatProfile()`
@@ -29,7 +35,13 @@
 
 ## Dependency and Implementation Rules
 
-- Depends on M02 only.
+- Depends on the content catalog only (deep-file M02). Runtime imports are
+  `RECOVERY_RESTORE_AMOUNT` from `../content/rooms` and `deriveStream` from
+  `./seededRng` (verified at HEAD). One type-only import is authorized:
+  `import type { EffectParam } from "../run/model"` — runtime-erased, so no
+  runtime run-domain edge materializes; it supports the CA-01 durable-field
+  mapping and `rolledParams` typing. Orchestrator authorization recorded
+  2026-09-15 (`1fcb139`); no value import exists.
 - Never call `Math.random()`, read wall-clock time, browser state, storage, or a
   mutable global cursor.
 - Event keys include run seed context, content version, depth/cycle, room/event
@@ -37,8 +49,9 @@
   later event.
 - Use deterministic ordering before weighted selection; never depend on object
   property iteration from unvalidated input.
-- Generators return candidates. M05 validates state-machine legality and M07
-  persists the materialized result before a refresh can reroll it.
+- Generators return candidates. The run domain validates state-machine legality
+  and persistence materializes/persists the result before a refresh can reroll
+  it.
 - Threat output exposes balancing diagnostics without coupling to UI text.
 
 ## Tests
@@ -48,16 +61,7 @@
   references, mandatory boss offers, exactly three unique reward cards, and
   compatible modifiers across representative high depths.
 
-## Change History
-
-| Date | Change |
-|------|--------|
-| 2026-08-29 | Imported Genesis M03 contract into the Forge registry. |
-| 2026-08-30 | Added v1 named streams plus deterministic route, threat, Shop, Recovery, room, and boss-routing candidates. |
-| 2026-09-15 | room-resolution SESSION-01: Added `generateRewardDraft` and the reward-draft public API; authorized type-only `EffectParam` import recorded. |
-
-<!-- deterministic-routes-and-utility-rooms SESSION-01 -->
-## Implemented Public API and Compatibility Contract
+## Implemented streams and compatibility contract (historical)
 
 - `seededRng.ts` exports `EventKey`, `SeededRng`, and
   `deriveStream(seed, contentVersion, eventKey)`. `SeededRng` exposes
@@ -69,25 +73,23 @@
   positive safe bounds through `2^32`; ASCII and Unicode golden vectors pin
   this behavior. Every derived stream owns its cursor in a closure.
 - `generators.ts` exports `RouteGenerationContext`, `GeneratedRouteOffer`,
-  `generateRouteOptions`, `ThreatGenerationContext`,
-  `GeneratedThreatProfile`, `generateThreatProfile`,
-  `ShopGenerationContext`, `GeneratedShopItem`, `generateShopInventory`,
-  `RoomGenerationContext`, `GeneratedRoomCandidate`, and
+  `generateRouteOptions`, `ThreatGenerationContext`, `GeneratedThreatProfile`,
+  `generateThreatProfile`, `ShopGenerationContext`, `GeneratedShopItem`,
+  `generateShopInventory`, `RoomGenerationContext`, `GeneratedRoomCandidate`,
   `generateRoomCandidate`, plus `THREAT_LIMITS` and `SHOP_PRICE_CAP`.
-- Non-boss routes contain exactly four offers in Battle, Elite, Shop,
-  Recovery order. Every positive multiple of three contains one available
-  Boss offer only. Room candidates carry inert `ready` projections; the Boss
-  projection uses the stable `routing` arrival phase and no modifiers.
+- Non-boss routes contain exactly four offers in Battle, Elite, Shop, Recovery
+  order. Every positive multiple of three contains one available Boss offer
+  only. Room candidates carry inert `ready` projections; the Boss projection
+  uses the stable `routing` arrival phase and no modifiers.
 - Threat policy uses log2 depth/cycle factors capped at budget 72, durability
   factor 4, density 12, and two hazards. Utility threat is zero budget,
-  durability factor 1, and zero density. Shop prices are materialized from
-  base price plus bounded seeded depth/cycle variation and cap at 96.
+  durability factor 1, and zero density. Shop prices are materialized from base
+  price plus bounded seeded depth/cycle variation and cap at 96.
 - Every seeded selection starts from a stable authored-ID sort. Exported
   candidate arrays and nested mutable-looking projections are frozen or
-  defensively copied. M03 imports M02 only and never imports run state.
+  defensively copied. No run-state value import exists.
 
-<!-- room-resolution SESSION-01 -->
-## Reward draft generator API
+## Reward draft generator API (room-resolution SESSION-01)
 
 - `generators.ts` adds public `RewardGenerationContext` (`seed`,
   `contentVersion`, `runId`, `depth`, `cycle`, `roomEventKey`, `roomType`,
@@ -101,10 +103,12 @@
   sub-streams append `:param:<effectKey>`. Base-reward pools are ID-sorted
   before seeded selection; all outputs frozen; contexts outside bounds throw
   `TypeError`/`RangeError` like the existing generators.
-- **Dependency-rule delta:** `generators.ts` contains a type-only
-  `import type { EffectParam } from "../run/model"` — runtime-erased, so no
-  runtime module edge M03→M05 materializes. The "Depends on M02 only" rule
-  above now reads: M03 depends on M02 plus this one authorized type-only
-  run-model type import (CA-01's durable-field mapping), and never imports run
-  state at runtime. Orchestrator authorization recorded 2026-09-15T21:20Z
-  (`.program/decisions.md`); no value import.
+
+## Change History
+
+| Date | Change |
+|------|--------|
+| 2026-08-29 | Imported deep-file contract into the Forge registry. |
+| 2026-08-30 | Added v1 named streams plus deterministic route, threat, Shop, Recovery, room, and boss-routing candidates. |
+| 2026-09-15 | room-resolution SESSION-01: Added `generateRewardDraft` and the reward-draft public API; authorized type-only `EffectParam` import recorded. |
+| 2026-09-22 | Archivist final reconciliation: folded the type-only-import authorization into the dependency rules (one rule, one home), removed the redundant SESSION-01 fragment, and added `generateRoomCandidate` to the Public API (it was exported and consumed but unlisted). |

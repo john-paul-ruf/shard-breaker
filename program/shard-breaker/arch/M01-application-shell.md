@@ -1,5 +1,12 @@
 # M01 — Application Shell and Command Store
 
+> **Registry note:** This file is a per-module deep record for the application
+> shell. In PROGRAM-CONFIG.md's Module Registry this module is row **M06**
+> (Application orchestration, `src/app/` + `src/main.tsx`); the ID in this
+> heading follows the archived per-module deep-file numbering, which covers
+> M01–M13 across all modules. Program sessions and STATE.md use the registry
+> IDs (M01–M08) — see the PROGRAM-CONFIG registry for the authoritative list.
+
 ## Boundary
 
 - **Paths:** `./src/main.tsx`, `./src/app/`
@@ -41,7 +48,8 @@ not mutate domain state or call IndexedDB directly.
 
 ## Dependency and Implementation Rules
 
-- Depends on M05, M07, and M08. It is the only module that joins those layers.
+- Depends on M05 (run domain), M07 (persistence), and M08 (screens, deep-file
+  numbering; the UI module). It is the only module that joins those layers.
 - Construct dependencies explicitly in `./src/main.tsx`; inject repositories,
   seed source, and clock metadata rather than hiding them in globals.
 - Apply a pure transition before persistence, but do not publish the next
@@ -58,9 +66,13 @@ not mutate domain state or call IndexedDB directly.
 - Cover successful publication, rejected transitions, failed saves, stale
   revisions, loading invalid data, and screen derivation for every run phase.
 
-<!-- SESSION-06 -->
-## Durable launch application contract
+## Durable launch application contract (SESSION-02/06, historical)
 
+- `commands.ts` — `AppCommand` union: `home/select-class` (carries `classId`),
+  `run/request-start`, `run/resume`, `run/cancel-replacement`,
+  `run/confirm-abandon-and-start`, `run/return-to-archive`. Controlled intent
+  only; no metadata from the DOM, no React/screen imports, no mutable
+  re-exports.
 - `createAppStore(dependencies)` receives the immutable `ContentCatalog`, the
   narrow `RunLifecycleRepository`, and injected clock, identity, and opaque-seed
   sources. It exposes one referentially stable frozen `AppState` snapshot until
@@ -69,45 +81,27 @@ not mutate domain state or call IndexedDB directly.
   Initialization loads first, bootstraps only `profile-missing`, reloads the
   validated state, selects the first unlocked class when needed, and always
   returns a recovered living run to launch archive mode.
-- Start and confirmed replacement invoke the pure M05 reducer, pass its explicit
-  instruction to M07, and publish durable next state only after repository
-  success. Confirmed replacement is intentionally two commits: committed
-  abandonment is published before replacement creation, and a failed second
-  commit remains a truthful no-run archive warning. Resume, Cancel, class
-  selection, and Return-to-archive do not write persistence.
-- `deriveScreen(state)` returns `{ id: "home", mode: "archive" }`,
-  `{ id: "home", mode: "checkpoint" }`, or `{ id: "route-map" }` (route phase
-  with non-empty offers in checkpoint mode); checkpoint requires ready state
-  plus a living run. `App` observes with `useSyncExternalStore`, initializes once
-  under React Strict Mode, resolves content labels through the catalog, and
-  renders bounded loading/fatal states or the controlled `HomeScreen` or
-  `RouteMapScreen`.
-- `./src/main.tsx` checks the mount point, IndexedDB, UUID generation, and secure
-  random bytes before composition. It opens M07 once, injects metadata sources,
-  mounts React 19 under Strict Mode, and renders an actionable unsupported state
-  instead of allowing a blank-page startup failure.
+- Start and confirmed replacement invoke the pure run-domain reducer, pass its
+  explicit instruction to persistence, and publish durable next state only
+  after repository success. Confirmed replacement is intentionally two commits:
+  committed abandonment is published before replacement creation, and a failed
+  second commit remains a truthful no-run archive warning. Resume, Cancel,
+  class selection, and Return-to-archive do not write persistence.
+- `deriveScreen(state)` maps a validated checkpoint-mode living run by phase:
+  `route` → `{ id: "route-map" }`, `room` → `{ id: "room" }`, `reward` →
+  `{ id: "reward" }`, otherwise `{ id: "home", mode: "checkpoint" }`; non-ready
+  or non-checkpoint state returns `{ id: "home", mode: "archive" }`. `App`
+  observes with `useSyncExternalStore`, initializes once under React Strict
+  Mode, resolves content labels through the catalog, and renders bounded
+  loading/fatal states or the controlled `HomeScreen`, `RouteMapScreen`,
+  `RoomScreen`, or `RewardsScreen`.
+- `./src/main.tsx` checks the mount point, IndexedDB, UUID generation, and
+  secure random bytes before composition. It opens persistence once, injects
+  metadata sources, mounts React 19 under Strict Mode, and renders an
+  actionable unsupported state instead of allowing a blank-page startup
+  failure.
 
-## Change History
-| 2026-09-22 | room-resolution SESSION-03: Added room/reward screen descriptors and App model/render branches for room and reward phases. |
-
-| Date | Change |
-|------|--------|
-| 2026-08-29 | Added the serialized durable application store, launch navigation, React binding, and browser composition root. |
-| 2026-08-29 | Imported Genesis M01 contract into the Forge registry. |
-| 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |
-| 2026-09-14 | route-drafting SESSION-02: Added route-map screen descriptor and App routing for phase "route". |
-| 2026-09-22 | room-resolution SESSION-02: Added room/buy-shop-item, room/commit-recovery, room/resolve, reward/select app commands and store handlers with saveCheckpoint persistence and replacement-disclosure save signal. |
-
-<!-- SESSION-02 -->
-## M01 — Application shell and command store (`./src/app/`)
-
-- `commands.ts` — `AppCommand` union: `home/select-class` (carries `classId`),
-  `run/request-start`, `run/resume`, `run/cancel-replacement`,
-  `run/confirm-abandon-and-start`, `run/return-to-archive`. Controlled intent only;
-  no metadata from the DOM, no React/screen imports, no mutable re-exports.
-
-<!-- route-drafting SESSION-01 -->
-## Route app commands (route-drafting SESSION-01)
+## Route app commands (route-drafting SESSION-01, historical)
 
 - `commands.ts` — `AppCommand` extended with `route/materialize`,
   `route/select-offer` (carries `offerId`), `route/commit`.
@@ -115,14 +109,13 @@ not mutate domain state or call IndexedDB directly.
   `commitId`/`now`, builds `MaterializeRoute` run command, calls `runReducer`,
   persists via `saveCheckpoint`, publishes state + save signal),
   `handleSelectRouteOffer`, `handleCommitRoute`. All three added to
-  `isDurableCommand` and `runRejectionMessage` with bounded messages for the new
-  route rejection codes.
-- `appStore.test.ts` — 5 store integration tests: materialize → offers populated,
-  select → selection persisted, commit → room phase, re-materialize rejected,
-  unknown offer rejected.
+  `isDurableCommand` and `runRejectionMessage` with bounded messages for the
+  new route rejection codes.
+- `appStore.test.ts` — 5 store integration tests: materialize → offers
+  populated, select → selection persisted, commit → room phase,
+  re-materialize rejected, unknown offer rejected.
 
-<!-- room-resolution SESSION-02 -->
-## Room app commands (room-resolution SESSION-02)
+## Room/reward application commands (room-resolution SESSION-02)
 
 - `commands.ts` — `AppCommand` extended with `room/buy-shop-item` (carries
   `itemId`), `room/commit-recovery`, `room/resolve`, `reward/select` (carries
@@ -135,19 +128,36 @@ not mutate domain state or call IndexedDB directly.
   the pre/post build (head-change on a full side) and publishes "Reward
   selected; replaced <name>. Advancing to Depth N."
 
-<!-- room-resolution SESSION-03 -->
 ## Room/reward navigation (room-resolution SESSION-03)
 
 - `navigation.ts` — `ScreenDescriptor` gained `{ readonly id: "room" }` and
-  `{ readonly id: "reward" }`. `deriveScreen` returns `room` for
-  `phase === "room"` and `reward` for `phase === "reward"` in checkpoint mode;
-  the room-phase fallback to `home/checkpoint` is removed.
+  `{ readonly id: "reward" }` (verified at HEAD: `src/app/navigation.ts`).
+  `deriveScreen` returns `room` for `phase === "room"` and `reward` for
+  `phase === "reward"` in checkpoint mode; the room-phase fallback to
+  `home/checkpoint` is removed.
 - `App.tsx` — added `createRoomModel(state, catalog)` and
   `createRewardsModel(state, catalog)` (module-private); both return
   `RoomModelResult` / `RewardsModelResult` discriminated results mirroring the
   existing `HomeModelResult`/`RouteMapModelResult` pattern and render
   `RoomScreen`/`RewardsScreen` or `ErrorShell` for the new descriptors.
-  `App.tsx` reads `ROUTE_SUPPORT_DEFINITIONS` from `src/domain/content/rooms.ts`
-  for objective display names (M06 → M01 edge, already declared; a
-  `listRouteSupport()` facade lookup is a recorded follow-up, not a contract
-  break).
+- **Content-facade edge:** `App.tsx` value-imports `ROUTE_SUPPORT_DEFINITIONS`
+  from `src/domain/content/rooms.ts` to resolve objective display names
+  (`src/app/App.tsx:15`, `objectiveNamesFor` at line 220). This is a realized
+  content-orchestration runtime import, declared in the registry as an expected
+  content edge and recorded as a follow-up, not a contract break: a
+  `listRouteSupport()` facade lookup on `ContentCatalog` would keep
+  objective-name resolution behind the catalog like every other content read.
+  Recorded for Planner as a small cleanup/facade follow-up (STATE.md Current
+  Blockers).
+
+## Change History
+
+| Date | Change |
+|------|--------|
+| 2026-08-29 | Imported deep-file contract into the Forge registry. |
+| 2026-08-29 | Added the serialized durable application store, launch navigation, React binding, and browser composition root. |
+| 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |
+| 2026-09-14 | route-drafting SESSION-02: Added route-map screen descriptor and App routing for phase "route". |
+| 2026-09-22 | room-resolution SESSION-02: Added room/buy-shop-item, room/commit-recovery, room/resolve, reward/select app commands and store handlers with saveCheckpoint persistence and replacement-disclosure save signal. |
+| 2026-09-22 | room-resolution SESSION-03: Added room/reward screen descriptors (`{ id: "room" }`, `{ id: "reward" }`), App model/render branches for room and reward phases, and the content-facade objective-name read. |
+| 2026-09-22 | Archivist final reconciliation: declared the dual module numbering (deep-file M06 vs registry M06), merged the Change History, repaired the deriveScreen enumeration to all five descriptors, and corrected the SESSION-03 edge record to the mechanically-derived content-rooms import. |
