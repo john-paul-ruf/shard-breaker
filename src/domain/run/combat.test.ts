@@ -237,6 +237,89 @@ describe("CA-03 — room-entry checkpoint emission and acceptance", () => {
   });
 });
 
+describe("validation — combat phase invariants", () => {
+  it("rejects an unresolved battle checkpoint with no undefeated enemy", () => {
+    const state = runInRoomPhase("battle");
+    const room = state.livingRun!.roomState!;
+    const allDefeated = {
+      ...state,
+      livingRun: {
+        ...state.livingRun!,
+        roomState: {
+          ...room,
+          combatCheckpoint: {
+            ...room.combatCheckpoint!,
+            enemies: room.combatCheckpoint!.enemies.map((enemy) => ({
+              ...enemy,
+              defeated: true,
+            })),
+          },
+        },
+      },
+    };
+    const result = validateRunState(allDefeated, catalog);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((issue) => issue.code === "invalid-combat-checkpoint")).toBe(true);
+    }
+    const parsed = parseLivingRunRecord(allDefeated.livingRun!, catalog);
+    expect(parsed.ok).toBe(false);
+  });
+
+  it("rejects a checkpoint whose charges exceed the authored maximum", () => {
+    const state = runInRoomPhase("battle", {
+      build: {
+        activeSkillIds: [],
+        passiveEquipmentIds: [],
+        carryOverRelicId: null,
+      },
+    });
+    const room = state.livingRun!.roomState!;
+    const inflated = {
+      ...state,
+      livingRun: {
+        ...state.livingRun!,
+        roomState: {
+          ...room,
+          combatCheckpoint: {
+            ...room.combatCheckpoint!,
+            skillCharges: [
+              { skillId: asContentId("skill-prism-burst"), remaining: 9, maximum: 9 },
+            ],
+          },
+        },
+      },
+    };
+    const result = validateRunState(inflated, catalog);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((issue) => issue.code === "invalid-skill-charges")).toBe(true);
+    }
+    const parsed = parseLivingRunRecord(inflated.livingRun!, catalog);
+    expect(parsed.ok).toBe(false);
+  });
+
+  it("rejects a foreign outcome ID on the room ledger", () => {
+    const state = runInRoomPhase("battle");
+    const room = state.livingRun!.roomState!;
+    const foreign = {
+      ...state,
+      livingRun: {
+        ...state.livingRun!,
+        roomState: {
+          ...room,
+          processedOutcomeIds: ["route:content-1:elsewhere:outcome:clear:0"],
+        },
+      },
+    };
+    const result = validateRunState(foreign, catalog);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((issue) => issue.code === "invalid-outcome-id")).toBe(true);
+    }
+  });
+});
+
 describe("runReducer — LaunchBall", () => {
   it("marks an open combat room in progress and keeps a valid checkpoint", () => {
     const state = runInRoomPhase("battle");

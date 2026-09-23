@@ -298,20 +298,19 @@ function collectRoomIssues(
     );
   }
 
-  // While a non-boss combat room is unresolved its formation must still
-  // stand: a checkpoint with no enemy rows could never clear, so it is
+  // While a battle/elite room is unresolved its formation must still stand:
+  // a checkpoint with no undefeated enemies could never clear, so it is
   // incoherent for an open room. (Boss formation rules land with S05/S06.)
   if (
-    isCombatRoom(room.roomType) &&
-    room.roomType !== "boss" &&
+    (room.roomType === "battle" || room.roomType === "elite") &&
     room.status !== "resolved" &&
     checkpoint !== null
   ) {
     collector.require(
-      checkpoint.enemies.length > 0,
+      checkpoint.enemies.some((enemy) => !enemy.defeated),
       "invalid-combat-checkpoint",
       "livingRun.roomState.combatCheckpoint.enemies",
-      "an unresolved combat room must carry at least one enemy",
+      "an unresolved battle or elite room must carry a non-defeated enemy",
     );
   }
 
