@@ -71,6 +71,7 @@
   urgent. `SaveSignal` owns no timeout.
 
 ## Change History
+| 2026-09-22 | room-resolution SESSION-03: Added RewardCard accessible radio component with catalog-resolved display and replacement disclosure. |
 
 | Date | Change |
 |------|--------|
@@ -88,3 +89,12 @@
   Risk-tier formatting ("0X / 05"). `visibleCost` shown for shop rooms.
   `className` includes `route-card route-card--{roomType}` and `route-card--selected`.
   Disabled when `isBusy`; 44px minimum target; visible focus ring.
+
+<!-- room-resolution SESSION-03 -->
+## Reward card (room-resolution SESSION-03)
+
+- `src/ui/components/RewardCard.tsx` (new) — exports `RewardCardProps`,
+  `RewardCard`: an accessible `role="radio"` card rendering caller-resolved
+  display fields (no catalog access inside the component); glyph by rewardType,
+  enhancement block, material cost, trade-off row, replacement disclosure,
+  44px targets, roving-focus radio keyboard.

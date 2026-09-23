@@ -75,6 +75,7 @@
   semantics with `SELECTED`/`LOCKED` text.
 
 ## Change History
+| 2026-09-22 | room-resolution SESSION-03: Added RoomScreen (shop/recovery/combat-placeholder) and RewardsScreen (3-card radiogroup with replacement disclosure) with catalog-resolved display. |
 
 | Date | Change |
 |------|--------|
@@ -102,3 +103,18 @@
   integration test (start → route map → 4 cards → select → commit → room phase).
 - `navigation.ts` — `ScreenDescriptor` extended with `{ id: "route-map" }`;
   `deriveScreen` returns it for `phase === "route"` in checkpoint mode.
+
+<!-- room-resolution SESSION-03 -->
+## Room and reward screens (room-resolution SESSION-03)
+
+- `src/ui/screens/RoomScreen.tsx` (new) — exports `RoomScreenViewModel`,
+  `RoomScreenProps`, `RoomScreen`. The view model renders catalog-resolved
+  `objectiveNames`/`roomName`/`roomSummary` and a shop item list with
+  precomputed `isPurchased`/`isAffordable`; `isBossRoom` selects the
+  boss-specific placeholder copy.
+- `src/ui/screens/RewardsScreen.tsx` (new) — exports `RewardsScreenViewModel`,
+  `RewardsScreenProps`, `RewardsScreen`. The view model carries the full
+  `ContentCatalog` plus `build`; display fields (base reward name/description,
+  enhancement labels, replacement preview) are resolved inside the screen via
+  the replace-earliest rule (`activeSkillIds[0]` / `passiveEquipmentIds[0]` at
+  caps 3/4), because S02's applied `RewardState` is never durable.

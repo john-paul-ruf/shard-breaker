@@ -43,6 +43,7 @@ tokens, but CSS does not import application modules.
   reduced-motion behavior, choice legibility, and arena/rail order.
 
 ## Change History
+| 2026-09-22 | room-resolution SESSION-03: Added room/reward screen styles (global.css) and responsive reflow (responsive.css). |
 
 | Date | Change |
 |------|--------|
@@ -135,3 +136,15 @@ never color alone.
   text.
 - `.class-card` expects three grid columns (icon / name+note / integrity);
   `.run-loop-steps` styles its direct children as cells.
+
+<!-- room-resolution SESSION-03 -->
+## Room and reward styles (room-resolution SESSION-03)
+
+- `global.css` — room screen compositions (`.room-screen`, `.room-header`,
+  `.room-shop`, `.shop-item` incl. `--purchased` and `__reason`,
+  `.room-recovery`, `.room-combat-placeholder`, `.room-actions`) and reward
+  compositions (`.reward-screen`, `.reward-header`, `.reward-cards`,
+  `.reward-card` + `--selected`/`--skill`/`--equipment`, `.reward-confirm-bar`)
+  using tokens only; state never color-only.
+- `responsive.css` — ≤980px horizontal-scroll card row + 2-col shop,
+  ≤720px stacked cards/shop/bars, reduced-motion disables hover transforms.

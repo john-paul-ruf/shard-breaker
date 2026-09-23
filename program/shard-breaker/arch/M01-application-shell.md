@@ -88,6 +88,7 @@ not mutate domain state or call IndexedDB directly.
   instead of allowing a blank-page startup failure.
 
 ## Change History
+| 2026-09-22 | room-resolution SESSION-03: Added room/reward screen descriptors and App model/render branches for room and reward phases. |
 
 | Date | Change |
 |------|--------|
@@ -133,3 +134,20 @@ not mutate domain state or call IndexedDB directly.
   rejection codes. `handleSelectReward` derives the replacement disclosure from
   the pre/post build (head-change on a full side) and publishes "Reward
   selected; replaced <name>. Advancing to Depth N."
+
+<!-- room-resolution SESSION-03 -->
+## Room/reward navigation (room-resolution SESSION-03)
+
+- `navigation.ts` — `ScreenDescriptor` gained `{ readonly id: "room" }` and
+  `{ readonly id: "reward" }`. `deriveScreen` returns `room` for
+  `phase === "room"` and `reward` for `phase === "reward"` in checkpoint mode;
+  the room-phase fallback to `home/checkpoint` is removed.
+- `App.tsx` — added `createRoomModel(state, catalog)` and
+  `createRewardsModel(state, catalog)` (module-private); both return
+  `RoomModelResult` / `RewardsModelResult` discriminated results mirroring the
+  existing `HomeModelResult`/`RouteMapModelResult` pattern and render
+  `RoomScreen`/`RewardsScreen` or `ErrorShell` for the new descriptors.
+  `App.tsx` reads `ROUTE_SUPPORT_DEFINITIONS` from `src/domain/content/rooms.ts`
+  for objective display names (M06 → M01 edge, already declared; a
+  `listRouteSupport()` facade lookup is a recorded follow-up, not a contract
+  break).
