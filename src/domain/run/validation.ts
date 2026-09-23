@@ -3,6 +3,7 @@ import type {
   BuildSnapshot,
   LivingRun,
   Profile,
+  RoomState,
   RouteState,
   RunState,
 } from "./model";
@@ -22,6 +23,7 @@ export type ValidationResult =
 
 const MAX_ACTIVE_SKILLS = 3;
 const MAX_PASSIVE_EQUIPMENT = 4;
+const COMBAT_ROOM_TYPES: readonly string[] = ["battle", "elite", "boss"];
 
 function isSafeNonNegativeInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
@@ -223,6 +225,113 @@ function collectRouteIssues(collector: IssueCollector, route: RouteState): void 
   );
 }
 
+function isCombatRoom(roomType: RoomState["roomType"]): boolean {
+  return COMBAT_ROOM_TYPES.includes(roomType);
+}
+
+function collectRoomIssues(
+  collector: IssueCollector,
+  room: RoomState,
+  catalog: ContentCatalog,
+): void {
+  // CA-03 coherence: combat rooms carry an entry checkpoint, utility rooms
+  // carry none. The persistence schema validates the checkpoint's shape;
+  // these rules enforce the room-type pairing and the checkpoint's charges.
+  collector.require(
+    isCombatRoom(room.roomType) === (room.combatCheckpoint !== null),
+    "invalid-combat-checkpoint-state",
+    "livingRun.roomState.combatCheckpoint",
+    isCombatRoom(room.roomType)
+      ? "a combat room must carry a combat checkpoint"
+      : "a utility room must not carry a combat checkpoint",
+  );
+
+  const checkpoint = room.combatCheckpoint;
+  if (checkpoint !== null) {
+    // Skill charges stay non-negative and within the authored per-skill
+    // maximum, so a checkpoint can never grant charges the catalog denies.
+    const maximums = new Map<ContentId, number>();
+    for (const charge of checkpoint.skillCharges) {
+      const result = catalog.getSkill(charge.skillId);
+      collector.require(
+        result.ok,
+        "unknown-skill",
+        "livingRun.roomState.combatCheckpoint.skillCharges.skillId",
+        `unknown skill in checkpoint charges: ${charge.skillId}`,
+      );
+      if (result.ok) {
+        maximums.set(charge.skillId, result.value.maxCharges);
+      }
+      collector.require(
+        Number.isSafeInteger(charge.remaining) && charge.remaining >= 0,
+        "invalid-skill-charges",
+        "livingRun.roomState.combatCheckpoint.skillCharges.remaining",
+        "checkpoint skill charges must be safe integers >= 0",
+      );
+      collector.require(
+        Number.isSafeInteger(charge.maximum) && charge.maximum >= 0,
+        "invalid-skill-charges",
+        "livingRun.roomState.combatCheckpoint.skillCharges.maximum",
+        "checkpoint skill charge maximums must be safe integers >= 0",
+      );
+      const authored = maximums.get(charge.skillId);
+      if (authored !== undefined) {
+        collector.require(
+          charge.maximum <= authored,
+          "invalid-skill-charges",
+          "livingRun.roomState.combatCheckpoint.skillCharges.maximum",
+          `skill ${charge.skillId} exceeds its authored charge maximum`,
+        );
+        collector.require(
+          charge.remaining <= charge.maximum,
+          "invalid-skill-charges",
+          "livingRun.roomState.combatCheckpoint.skillCharges.remaining",
+          `skill ${charge.skillId} holds more remaining charges than its maximum`,
+        );
+      }
+    }
+    collector.require(
+      hasUniqueValues(checkpoint.skillCharges.map((charge) => charge.skillId)),
+      "invalid-skill-charges",
+      "livingRun.roomState.combatCheckpoint.skillCharges",
+      "checkpoint skill charges must name each skill at most once",
+    );
+  }
+
+  // While a non-boss combat room is unresolved its formation must still
+  // stand: a checkpoint with no enemy rows could never clear, so it is
+  // incoherent for an open room. (Boss formation rules land with S05/S06.)
+  if (
+    isCombatRoom(room.roomType) &&
+    room.roomType !== "boss" &&
+    room.status !== "resolved" &&
+    checkpoint !== null
+  ) {
+    collector.require(
+      checkpoint.enemies.length > 0,
+      "invalid-combat-checkpoint",
+      "livingRun.roomState.combatCheckpoint.enemies",
+      "an unresolved combat room must carry at least one enemy",
+    );
+  }
+
+  // CA-02 ledger coherence: outcome IDs are room-scoped and recorded once.
+  collector.require(
+    hasUniqueValues(room.processedOutcomeIds),
+    "duplicate-outcome-id",
+    "livingRun.roomState.processedOutcomeIds",
+    "processed outcome IDs must be unique",
+  );
+  for (const outcomeId of room.processedOutcomeIds) {
+    collector.require(
+      outcomeId.startsWith(`${room.eventKey}:outcome:`),
+      "invalid-outcome-id",
+      "livingRun.roomState.processedOutcomeIds",
+      `processed outcome ID ${outcomeId} is not scoped to this room`,
+    );
+  }
+}
+
 function collectLivingRunIssues(
   collector: IssueCollector,
   run: LivingRun,
@@ -357,6 +466,9 @@ function collectLivingRunIssues(
 
   if (run.routeState !== null) {
     collectRouteIssues(collector, run.routeState);
+  }
+  if (run.roomState !== null) {
+    collectRoomIssues(collector, run.roomState, catalog);
   }
 }
 

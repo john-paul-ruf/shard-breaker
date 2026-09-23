@@ -129,7 +129,21 @@ function runRejectionMessage(error: RunRejection): string {
     case "recovery-already-committed":
       return "Recovery has already been committed this room.";
     case "combat-not-implemented":
-      return "The combat engine is not available yet, so this room cannot be resolved.";
+      return "Clear this room's combat encounter before it can be resolved.";
+    case "unknown-skill":
+      return "That skill is not part of this content version.";
+    case "skill-not-in-build":
+      return "That skill is not part of this run's active build.";
+    case "skill-no-charges":
+      return "That skill has no charges left this room.";
+    case "combat-checkpoint-missing":
+      return "This combat room has no saved arena state yet.";
+    case "invalid-aim-angle":
+      return "That aim angle is outside the legal launch cone.";
+    case "unknown-outcome-id":
+      return "That combat result does not match this room's expected outcome.";
+    case "duplicate-outcome-id":
+      return "That combat outcome has already been recorded for this room.";
     case "reward-already-selected":
       return "A reward has already been selected from this draft.";
     case "unknown-reward-card":

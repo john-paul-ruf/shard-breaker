@@ -9,8 +9,17 @@ import {
   generateRouteOptions,
   generateRoomCandidate,
 } from "../random/generators";
+import type { CombatInitContext } from "../combat/model";
+import { AIM_MAX_DEVIATION } from "../combat/model";
+import { fromCombatCheckpoint, toCombatCheckpoint } from "../combat/layout";
+import { launchBall } from "../combat/rules";
+import { outcomeIdFor } from "../combat/results";
+import { resolveEffects, resolveVolleyEffects } from "../combat/effects";
 import type { RunCommand, RunRejection, RunTransition } from "./commands";
+import type { CombatOutcomeMessage } from "./commands";
 import type {
+  CombatCheckpoint,
+  EffectParam,
   LivingRun,
   RewardCardSnapshot,
   RewardState,
@@ -535,6 +544,397 @@ function requireOpenRoomPhase(
   return { ok: true, run, room: run.roomState };
 }
 
+function isCombatRoomType(roomType: RoomState["roomType"]): boolean {
+  return roomType === "battle" || roomType === "elite" || roomType === "boss";
+}
+
+/**
+ * The static combat context for this room's arena: deterministic streams
+ * derive from `(seed, contentVersion, eventKey)`, threat numbers come from the
+ * committed threat profile, and the room's CA-02 loss ledger seeds the same
+ * kind loss index so a rebuilt state continues the room's outcome identity.
+ */
+function combatContextFor(run: LivingRun, room: RoomState): CombatInitContext {
+  return {
+    seed: run.seed,
+    contentVersion: run.contentVersion,
+    roomId: room.roomId,
+    eventKey: room.eventKey,
+    formationId: room.threatProfile.formationId,
+    density: room.threatProfile.density,
+    durabilityFactor: room.threatProfile.durabilityFactor,
+    lossCount: room.processedOutcomeIds.filter((outcomeId) =>
+      outcomeId.startsWith(`${room.eventKey}:outcome:loss_of_ball:`),
+    ).length,
+    hazardIds: room.threatProfile.hazardIds,
+  };
+}
+
+/**
+ * Enhancement params rolled onto granted reward cards. The committed
+ * SelectReward retains only the granted items, so the rolled-key carrier is
+ * recorded deferral debt (room-resolution decision 10, tracked to CA-13);
+ * until it lands the resolver runs on equipment and charge-gated skills
+ * only. Empty, never invented.
+ */
+const ROLLED_PARAMS_CARRIER_LANDING: readonly EffectParam[] = Object.freeze([]);
+
+/**
+ * Launch the ball in this room's combat arena. The command validates the aim
+ * against S01's legal cone and mirrors the room-entry checkpoint through
+ * `fromCombatCheckpoint` (which fails closed on stale or foreign layouts),
+ * then flips the room to in-progress. The persisted checkpoint stays the
+ * still-valid pre-launch snapshot: a live volley is never persisted (Custom
+ * Rule), and S01's `toCombatCheckpoint` rejects live phases by design, so
+ * the volley itself lives in the bridge's ephemeral session.
+ */
+function launchBallInRoom(
+  state: RunState,
+  command: Extract<RunCommand, { type: "LaunchBall" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  let badField = routeCommandMetadataField(command);
+  if (badField === null && !Number.isFinite(command.aimAngle)) {
+    badField = "aimAngle";
+  }
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const roomPhase = requireOpenRoomPhase(state, command);
+  if (!roomPhase.ok) return roomPhase.transition;
+  const { run, room } = roomPhase;
+
+  if (!isCombatRoomType(room.roomType)) {
+    return reject(state, { code: "combat-not-implemented", roomType: room.roomType });
+  }
+  if (room.status === "resolved") {
+    return reject(state, { code: "room-already-resolved", roomId: room.roomId });
+  }
+  const checkpoint = room.combatCheckpoint;
+  if (checkpoint === null) {
+    return reject(state, { code: "combat-checkpoint-missing", roomId: room.roomId });
+  }
+  if (Math.abs(command.aimAngle) > AIM_MAX_DEVIATION) {
+    return reject(state, { code: "invalid-aim-angle" });
+  }
+
+  const context = combatContextFor(run, room);
+  let combatState;
+  try {
+    combatState = fromCombatCheckpoint(checkpoint, context, catalog);
+  } catch {
+    return reject(state, {
+      code: "invalid-state",
+      issues: ["the stored combat checkpoint does not match this room's layout"],
+    });
+  }
+  const volley = resolveVolleyEffects(
+    catalog,
+    run.build,
+    ROLLED_PARAMS_CARRIER_LANDING,
+    checkpoint.skillCharges,
+  );
+  // The launch itself is validated here so a corrupt arena fails closed
+  // before the room flips to in-progress; the resulting live volley stays
+  // ephemeral in the bridge.
+  launchBall(combatState, command.aimAngle, volley);
+
+  const updatedRoom: RoomState = Object.freeze({
+    ...room,
+    status: "in_progress",
+    combatCheckpoint: checkpoint,
+  });
+
+  const updatedRun: LivingRun = {
+    ...run,
+    roomState: updatedRoom,
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
+/**
+ * Spend one charge of a held skill. Charges initialize on first use from the
+ * authored maximum plus the effect snapshot's bonus (persisted immediately),
+ * then decrement; a skill with no remaining charges is rejected. Presenta-
+ * tional skill effects are the arena's display concern; charge-gated
+ * simulation effects are resolved by the bridge per volley.
+ */
+function useSkillInRoom(
+  state: RunState,
+  command: Extract<RunCommand, { type: "UseSkill" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  let badField = routeCommandMetadataField(command);
+  if (badField === null && !isNonEmptyString(command.skillId)) {
+    badField = "skillId";
+  }
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const roomPhase = requireOpenRoomPhase(state, command);
+  if (!roomPhase.ok) return roomPhase.transition;
+  const { run, room } = roomPhase;
+
+  if (!isCombatRoomType(room.roomType)) {
+    return reject(state, { code: "combat-not-implemented", roomType: room.roomType });
+  }
+  if (room.status === "resolved") {
+    return reject(state, { code: "room-already-resolved", roomId: room.roomId });
+  }
+  const checkpoint = room.combatCheckpoint;
+  if (checkpoint === null) {
+    return reject(state, { code: "combat-checkpoint-missing", roomId: room.roomId });
+  }
+
+  const skillResult = catalog.getSkill(command.skillId);
+  if (!skillResult.ok) {
+    return reject(state, { code: "unknown-skill", skillId: command.skillId });
+  }
+  if (!run.build.activeSkillIds.includes(command.skillId)) {
+    return reject(state, { code: "skill-not-in-build", skillId: command.skillId });
+  }
+
+  const existing = checkpoint.skillCharges.find(
+    (charge) => charge.skillId === command.skillId,
+  );
+  let updatedCharges;
+  if (existing === undefined) {
+    const maximum =
+      skillResult.value.maxCharges +
+      resolveEffects(catalog, run.build, ROLLED_PARAMS_CARRIER_LANDING).extraCharges;
+    const remaining = maximum - 1;
+    if (remaining < 0) {
+      return reject(state, { code: "skill-no-charges", skillId: command.skillId });
+    }
+    updatedCharges = Object.freeze([
+      ...checkpoint.skillCharges,
+      Object.freeze({ skillId: command.skillId, remaining, maximum }),
+    ]);
+  } else {
+    const remaining = existing.remaining - 1;
+    if (remaining < 0) {
+      return reject(state, { code: "skill-no-charges", skillId: command.skillId });
+    }
+    updatedCharges = Object.freeze(
+      checkpoint.skillCharges.map((charge) =>
+        charge === existing ? Object.freeze({ ...charge, remaining }) : charge,
+      ),
+    );
+  }
+
+  const context = combatContextFor(run, room);
+  let rebuilt;
+  try {
+    rebuilt = fromCombatCheckpoint(checkpoint, context, catalog);
+  } catch {
+    return reject(state, {
+      code: "invalid-state",
+      issues: ["the stored combat checkpoint does not match this room's layout"],
+    });
+  }
+  const updatedCheckpoint = toCombatCheckpoint(rebuilt, updatedCharges);
+
+  const updatedRoom: RoomState = Object.freeze({
+    ...room,
+    status: "in_progress",
+    combatCheckpoint: updatedCheckpoint,
+  });
+
+  const updatedRun: LivingRun = {
+    ...run,
+    roomState: updatedRoom,
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
+/**
+ * Record one bridge-reported volley end (CA-02). The outcome ID must be
+ * exactly this room's next same-kind identity and is accepted at most once;
+ * a loss decrements Integrity by exactly one and restores a valid pre-launch
+ * checkpoint with the room's advanced loss ledger, and a clear enables room
+ * resolution.
+ */
+function reportCombatOutcome(
+  state: RunState,
+  command: Extract<RunCommand, { type: "ReportCombatOutcome" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  let badField = routeCommandMetadataField(command);
+  if (
+    badField === null &&
+    (!isNonEmptyString(command.outcome.outcomeId) ||
+      (command.outcome.kind !== "loss_of_ball" && command.outcome.kind !== "clear"))
+  ) {
+    badField = "outcome";
+  }
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const roomPhase = requireOpenRoomPhase(state, command);
+  if (!roomPhase.ok) return roomPhase.transition;
+  const { run, room } = roomPhase;
+
+  if (!isCombatRoomType(room.roomType)) {
+    return reject(state, { code: "combat-not-implemented", roomType: room.roomType });
+  }
+  if (room.status === "resolved") {
+    return reject(state, { code: "room-already-resolved", roomId: room.roomId });
+  }
+  const checkpoint = room.combatCheckpoint;
+  if (checkpoint === null) {
+    return reject(state, { code: "combat-checkpoint-missing", roomId: room.roomId });
+  }
+
+  const reported: CombatOutcomeMessage = command.outcome;
+  if (room.processedOutcomeIds.includes(reported.outcomeId)) {
+    return reject(state, { code: "duplicate-outcome-id", outcomeId: reported.outcomeId });
+  }
+  const priorCount = room.processedOutcomeIds.filter((outcomeId) =>
+    outcomeId.startsWith(`${room.eventKey}:outcome:${reported.kind}:`),
+  ).length;
+  const expectedId = outcomeIdFor(room.eventKey, reported.kind, priorCount);
+  if (reported.outcomeId !== expectedId) {
+    return reject(state, { code: "unknown-outcome-id", outcomeId: reported.outcomeId });
+  }
+
+  const recordedOutcomeIds = Object.freeze([
+    ...room.processedOutcomeIds,
+    reported.outcomeId,
+  ]);
+
+  const context = combatContextFor(run, room);
+  let rebuilt;
+  try {
+    rebuilt = fromCombatCheckpoint(checkpoint, context, catalog);
+  } catch {
+    return reject(state, {
+      code: "invalid-state",
+      issues: ["the stored combat checkpoint does not match this room's layout"],
+    });
+  }
+
+  let updatedRun: LivingRun;
+  if (reported.kind === "clear") {
+    const updatedRoom: RoomState = Object.freeze({
+      ...room,
+      status: "in_progress",
+      processedOutcomeIds: recordedOutcomeIds,
+    });
+    updatedRun = {
+      ...run,
+      roomState: updatedRoom,
+      revision: run.revision + 1,
+      updatedAt: command.now,
+      lastCommitId: command.commitId,
+    };
+  } else {
+    // CA-04: a loss costs exactly one Integrity and restores a valid
+    // pre-launch checkpoint. Reaching 0 is the death boundary owned by
+    // CAP-12 (S07): until finalization lands, a loss at 1 commits with
+    // integrity 0 and the room still open in pre-launch; a further loss at
+    // 0 is rejected — no fabricated survival.
+    const integrityCurrent = run.integrityCurrent - 1;
+    if (integrityCurrent < 0) {
+      return reject(state, {
+        code: "invalid-state",
+        issues: ["integrity is already depleted"],
+      });
+    }
+    const restoredState = { ...rebuilt, losses: context.lossCount + 1 };
+    const restoredCheckpoint: CombatCheckpoint = toCombatCheckpoint(
+      restoredState,
+      checkpoint.skillCharges,
+    );
+    const updatedRoom: RoomState = Object.freeze({
+      ...room,
+      status: "in_progress",
+      processedOutcomeIds: recordedOutcomeIds,
+      combatCheckpoint: restoredCheckpoint,
+    });
+    updatedRun = {
+      ...run,
+      roomState: updatedRoom,
+      integrityCurrent,
+      revision: run.revision + 1,
+      updatedAt: command.now,
+      lastCommitId: command.commitId,
+    };
+  }
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
 function buyShopItem(
   state: RunState,
   command: Extract<RunCommand, { type: "BuyShopItem" }>,
@@ -714,12 +1114,15 @@ function resolveRoom(
   if (room.status === "resolved") {
     return reject(state, { code: "room-already-resolved", roomId: room.roomId });
   }
-  if (
-    room.roomType === "battle" ||
-    room.roomType === "elite" ||
-    room.roomType === "boss"
-  ) {
-    return reject(state, { code: "combat-not-implemented", roomType: room.roomType });
+  if (isCombatRoomType(room.roomType)) {
+    // The code name stays (fail-closed guard); the meaning narrowed to
+    // "clear first": a combat room resolves only after its clear outcome is
+    // on this room's CA-02 ledger.
+    if (
+      !room.processedOutcomeIds.includes(outcomeIdFor(room.eventKey, "clear", 0))
+    ) {
+      return reject(state, { code: "combat-not-implemented", roomType: room.roomType });
+    }
   }
 
   const rewardDraft = generateRewardDraft(catalog, {
@@ -907,6 +1310,12 @@ export function runReducer(
       return buyShopItem(state, command, catalog);
     case "CommitRecovery":
       return commitRecovery(state, command, catalog);
+    case "LaunchBall":
+      return launchBallInRoom(state, command, catalog);
+    case "UseSkill":
+      return useSkillInRoom(state, command, catalog);
+    case "ReportCombatOutcome":
+      return reportCombatOutcome(state, command, catalog);
     case "ResolveRoom":
       return resolveRoom(state, command, catalog);
     case "SelectReward":

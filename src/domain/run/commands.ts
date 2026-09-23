@@ -1,6 +1,12 @@
 import type { ContentId } from "../content/catalog";
 import type { RunState } from "./model";
 
+/** Serializable loss/clear report the bridge sends; no frame data crosses. */
+export interface CombatOutcomeMessage {
+  readonly outcomeId: string;
+  readonly kind: "loss_of_ball" | "clear";
+}
+
 /**
  * Serializable lifecycle command. Callers supply every nondeterministic input
  * (run ID, seed, clock, commit ID, expected revisions) so the reducer stays
@@ -60,6 +66,30 @@ export type RunCommand =
       readonly now: number;
     }
   | {
+      readonly type: "LaunchBall";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly aimAngle: number;
+      readonly commitId: string;
+      readonly now: number;
+    }
+  | {
+      readonly type: "UseSkill";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly skillId: ContentId;
+      readonly commitId: string;
+      readonly now: number;
+    }
+  | {
+      readonly type: "ReportCombatOutcome";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly outcome: CombatOutcomeMessage;
+      readonly commitId: string;
+      readonly now: number;
+    }
+  | {
       readonly type: "ResolveRoom";
       readonly runId: string;
       readonly expectedRevision: number;
@@ -102,6 +132,13 @@ export type RunRejection =
   | { readonly code: "room-already-resolved"; readonly roomId: string }
   | { readonly code: "recovery-already-committed"; readonly roomId: string }
   | { readonly code: "combat-not-implemented"; readonly roomType: RoomTypeForRejection }
+  | { readonly code: "unknown-skill"; readonly skillId: ContentId }
+  | { readonly code: "skill-not-in-build"; readonly skillId: ContentId }
+  | { readonly code: "skill-no-charges"; readonly skillId: ContentId }
+  | { readonly code: "combat-checkpoint-missing"; readonly roomId: string }
+  | { readonly code: "invalid-aim-angle" }
+  | { readonly code: "unknown-outcome-id"; readonly outcomeId: string }
+  | { readonly code: "duplicate-outcome-id"; readonly outcomeId: string }
   | { readonly code: "reward-already-selected"; readonly status: "selected" | "applied" }
   | { readonly code: "unknown-reward-card"; readonly cardId: string };
 
