@@ -30,3 +30,5 @@ yarn-error.log*
 /program/shard-breaker/prompts/
 /program/shard-breaker/demiurge.yaml
 /program/shard-breaker/img-source/
+/program/shard-breaker/runs/
+/program/shard-breaker/STATE.md
