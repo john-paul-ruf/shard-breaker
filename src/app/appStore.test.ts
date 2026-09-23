@@ -1041,7 +1041,7 @@ describe("createAppStore room and reward commands", () => {
     expect(snapshot.saveSignal).toMatchObject({
       tone: "rejected",
       message:
-        "The combat engine is not available yet, so this room cannot be resolved.",
+        "Clear this room's combat encounter before it can be resolved.",
     });
   });
 
@@ -1075,5 +1075,179 @@ describe("createAppStore room and reward commands", () => {
       message: "The current archive state is invalid. No saved data was changed.",
     });
     expect(repository.saveCheckpoint).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe("createAppStore combat commands", () => {
+  it("launches in a committed battle room, persisting via saveCheckpoint", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route", "commit-launch"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+
+    await store.dispatch({ type: "combat/launch", aimAngle: 0.2 });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun!.roomState!.status).toBe("in_progress");
+    expect(snapshot.livingRun!.roomState!.combatCheckpoint).not.toBeNull();
+    expect(snapshot.livingRun!.revision).toBe(4);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Launch committed.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(4);
+    expect(
+      vi.mocked(repository.saveCheckpoint).mock.calls.at(-1)?.[0]
+    ).toMatchObject({
+      kind: "save-checkpoint",
+      runId: livingRun.runId,
+      proposedRun: { revision: 4 },
+    });
+  });
+
+  it("reports a clear outcome and resolves the room through the store", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-outcome",
+        "commit-resolve",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+
+    await store.dispatch({
+      type: "combat/report-outcome",
+      outcome: { outcomeId: `${eventKey}:outcome:clear:0`, kind: "clear" },
+    });
+    expect(store.getSnapshot().saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Combat outcome committed.",
+    });
+
+    await store.dispatch({ type: "room/resolve" });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun!.phase).toBe("reward");
+    expect(snapshot.livingRun!.roomState).toBeNull();
+    expect(snapshot.livingRun!.rewardState!.cards).toHaveLength(3);
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(5);
+  });
+
+  it("reports a loss outcome with the decrement visible in the published run", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun({ integrityCurrent: 3 });
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route", "commit-outcome"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+
+    await store.dispatch({
+      type: "combat/report-outcome",
+      outcome: { outcomeId: `${eventKey}:outcome:loss_of_ball:0`, kind: "loss_of_ball" },
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun!.integrityCurrent).toBe(2);
+    expect(snapshot.livingRun!.roomState!.processedOutcomeIds).toHaveLength(1);
+    expect(snapshot.livingRun!.roomState!.combatCheckpoint!.kind).toBe("loss_of_ball");
+    expect(snapshot.saveSignal).toMatchObject({ tone: "saved" });
+  });
+
+  it("spends a skill charge through the store and persists the ledger", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun({
+      build: {
+        activeSkillIds: ["skill-shield-bash" as ContentId],
+        passiveEquipmentIds: [],
+        carryOverRelicId: null,
+      },
+    });
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route", "commit-skill"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+
+    await store.dispatch({ type: "combat/use-skill", skillId: "skill-shield-bash" as ContentId });
+
+    const charges = store.getSnapshot().livingRun!.roomState!.combatCheckpoint!.skillCharges;
+    expect(charges).toEqual([
+      { skillId: "skill-shield-bash", remaining: 1, maximum: 2 },
+    ]);
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects combat commands outside a combat room without touching durable state", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("shop", store);
+    const before = store.getSnapshot().livingRun;
+
+    await store.dispatch({ type: "combat/launch", aimAngle: 0 });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun).toBe(before);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "rejected",
+      message: "Clear this room's combat encounter before it can be resolved.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a duplicate outcome report and leaves the archive unchanged", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-outcome",
+        "commit-outcome-2",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+    const outcome = { outcomeId: `${eventKey}:outcome:clear:0`, kind: "clear" as const };
+    await store.dispatch({ type: "combat/report-outcome", outcome });
+    const afterFirst = store.getSnapshot().livingRun;
+
+    await store.dispatch({ type: "combat/report-outcome", outcome });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun).toBe(afterFirst);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "rejected",
+      message: "That combat outcome has already been recorded for this room.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(4);
   });
 });

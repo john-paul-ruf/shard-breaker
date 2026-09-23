@@ -1,5 +1,5 @@
 import type { ContentCatalog, ContentId } from "../domain/content/catalog";
-import type { RunRejection } from "../domain/run/commands";
+import type { CombatOutcomeMessage, RunRejection } from "../domain/run/commands";
 import type { LivingRun, Profile, RunState } from "../domain/run/model";
 import { runReducer } from "../domain/run/reducer";
 import type { RunLifecycleRepository } from "../persistence/envelopes";
@@ -162,6 +162,9 @@ function isDurableCommand(command: AppCommand): boolean {
     command.type === "route/materialize" ||
     command.type === "route/select-offer" ||
     command.type === "route/commit" ||
+    command.type === "combat/launch" ||
+    command.type === "combat/use-skill" ||
+    command.type === "combat/report-outcome" ||
     command.type === "room/buy-shop-item" ||
     command.type === "room/commit-recovery" ||
     command.type === "room/resolve" ||
@@ -736,6 +739,189 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
     }
   }
 
+  async function handleCombatLaunch(aimAngle: number): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "LaunchBall",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          aimAngle,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The launch could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `The launch was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: { tone: "saved", message: "Launch committed." },
+      });
+    } catch {
+      rejectCommand(
+        "The launch could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  async function handleCombatUseSkill(skillId: ContentId): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "UseSkill",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          skillId,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The skill use could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `The skill use was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: { tone: "saved", message: "Skill charge committed." },
+      });
+    } catch {
+      rejectCommand(
+        "The skill use could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  async function handleCombatReportOutcome(outcome: CombatOutcomeMessage): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "ReportCombatOutcome",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          outcome,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The combat outcome could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `The combat outcome was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: { tone: "saved", message: "Combat outcome committed." },
+      });
+    } catch {
+      rejectCommand(
+        "The combat outcome could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
   async function handleResolveRoom(): Promise<void> {
     const runState = currentRunState();
     if (runState === null || runState.livingRun === null) {
@@ -1079,6 +1265,15 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
         return;
       case "route/commit":
         await handleCommitRoute();
+        return;
+      case "combat/launch":
+        await handleCombatLaunch(command.aimAngle);
+        return;
+      case "combat/use-skill":
+        await handleCombatUseSkill(command.skillId);
+        return;
+      case "combat/report-outcome":
+        await handleCombatReportOutcome(command.outcome);
         return;
       case "room/buy-shop-item":
         await handleBuyShopItem(command.itemId);

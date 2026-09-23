@@ -1,4 +1,5 @@
 import type { ContentId } from "../domain/content/catalog";
+import type { CombatOutcomeMessage } from "../domain/run/commands";
 
 /**
  * The narrow, serializable intent boundary the launch UI and game bridge
@@ -17,6 +18,12 @@ export type AppCommand =
   | { readonly type: "route/materialize" }
   | { readonly type: "route/select-offer"; readonly offerId: string }
   | { readonly type: "route/commit" }
+  | { readonly type: "combat/launch"; readonly aimAngle: number }
+  | { readonly type: "combat/use-skill"; readonly skillId: ContentId }
+  | {
+      readonly type: "combat/report-outcome";
+      readonly outcome: CombatOutcomeMessage;
+    }
   | { readonly type: "room/buy-shop-item"; readonly itemId: ContentId }
   | { readonly type: "room/commit-recovery" }
   | { readonly type: "room/resolve" }
