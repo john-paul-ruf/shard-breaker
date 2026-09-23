@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { ContentId } from "../domain/content/catalog";
@@ -39,6 +39,20 @@ function makeProfile(): Profile {
     now: 1_700_000_000_000,
     commitId: "commit-app-bootstrap",
   });
+}
+
+function rewardCard(index: number) {
+  return {
+    cardId: `reward-key:card:${String(index)}`,
+    baseRewardId: (
+      index === 1 ? "equipment-fractal-core" : "skill-phase-shunt"
+    ) as ContentId,
+    rewardType: index === 1 ? ("equipment" as const) : ("skill" as const),
+    enhancementIds: [],
+    rolledParams: [],
+    materialCost: index + 1,
+    tradeoffId: null,
+  };
 }
 
 function makeLivingRun(
@@ -264,7 +278,33 @@ describe("deriveScreen", () => {
       },
     };
     expect(deriveScreen(state({ launchMode: "checkpoint", livingRun: roomRun })))
-      .toEqual({ id: "home", mode: "checkpoint" });
+      .toEqual({ id: "room" });
+  });
+
+  it("derives reward for a living run in reward phase checkpoint mode", () => {
+    const livingRun = makeLivingRun();
+    const rewardRun: LivingRun = {
+      ...livingRun,
+      phase: "reward",
+      routeState: null,
+      roomState: null,
+      rewardState: {
+        eventKey: "reward-1",
+        sourceRoomId: "room-1",
+        cards: [
+          rewardCard(0),
+          rewardCard(1),
+          rewardCard(2),
+        ],
+        selectedCardId: null,
+        selectionCommitId: null,
+        status: "offered",
+        displacedRewardId: null,
+        displacedSlot: null,
+      },
+    };
+    expect(deriveScreen(state({ launchMode: "checkpoint", livingRun: rewardRun })))
+      .toEqual({ id: "reward" });
   });
 
   it("derives archive when no living run or not in checkpoint mode", () => {
@@ -543,5 +583,141 @@ describe("App integration", () => {
     expect(snapshot.livingRun?.roomState).not.toBeNull();
     expect(snapshot.livingRun?.roomState?.status).toBe("ready");
     expect(memory.repository.saveCheckpoint).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("App room resolution integration", () => {
+  it("walks start → route → recovery room → resolve → reward draft → confirm → depth 2", async () => {
+    const user = userEvent.setup();
+    const memory = createMemoryRepository({
+      profile: makeProfile(),
+      livingRun: null,
+    });
+    const store = createStore(memory.repository, [
+      "run-journey",
+      "commit-journey-start",
+    ]);
+    renderApp(store);
+    await screen.findByRole("heading", { name: "Choose your signal." });
+
+    // Start → route map (auto-materialized).
+    await user.click(screen.getByRole("button", { name: "Start new run" }));
+    await screen.findByRole("heading", {
+      name: "Pick the next pressure point.",
+    });
+    await waitFor(
+      () =>
+        expect(store.getSnapshot().livingRun?.routeState?.offers).toHaveLength(4),
+      { timeout: 5000 },
+    );
+
+    // Select Recovery and commit into the room.
+    await user.click(screen.getByRole("radio", { name: "recovery // Soft Reset" }));
+    await user.click(screen.getByRole("button", { name: "Enter selected room" }));
+    await waitFor(() =>
+      expect(store.getSnapshot().livingRun?.phase).toBe("room"),
+    );
+
+    // Room screen shows the recovery offer and resolves.
+    expect(
+      await screen.findByRole("heading", { name: /Soft Reset \/\/ Recovery/ }),
+    ).toBeInTheDocument();
+    expect(store.getSnapshot().livingRun?.roomState?.roomType).toBe("recovery");
+
+    // Commit recovery: integrity clamps at max for a fresh full run.
+    await user.click(screen.getByRole("button", { name: "Commit recovery" }));
+    await waitFor(() =>
+      expect(
+        store.getSnapshot().livingRun?.roomState?.recovery?.committed,
+      ).toBe(true),
+    );
+    expect(store.getSnapshot().livingRun?.integrityCurrent).toBe(3);
+    expect(store.getSnapshot().livingRun?.integrityMax).toBe(3);
+
+    // Resolve → reward phase with three cards.
+    await user.click(
+      screen.getByRole("button", { name: "Advance to reward draft" }),
+    );
+    await waitFor(() =>
+      expect(store.getSnapshot().livingRun?.phase).toBe("reward"),
+    );
+    const rewardGroup = await screen.findByRole("radiogroup", {
+      name: "Three reward cards",
+    });
+    expect(within(rewardGroup).getAllByRole("radio")).toHaveLength(3);
+    expect(memory.getState()?.livingRun?.progress.roomsResolved).toBe(1);
+
+    // Stage the first card and confirm; the single command applies it.
+    await user.click(
+      within(rewardGroup).getAllByRole("radio")[0] as HTMLElement,
+    );
+    const stagedCardId = store.getSnapshot().livingRun?.rewardState?.cards[0]
+      ?.cardId;
+    expect(stagedCardId).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Confirm draft" }));
+
+    await waitFor(() =>
+      expect(store.getSnapshot().livingRun?.phase).toBe("route"),
+    );
+    const advanced = store.getSnapshot().livingRun;
+    expect(advanced?.depth).toBe(2);
+    expect(advanced?.rewardState).toBeNull();
+    expect(advanced?.routeState?.offers).toHaveLength(4);
+
+    // The route map renders at depth 2 with fresh offers.
+    expect(
+      await screen.findByRole("heading", {
+        name: "Pick the next pressure point.",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Depth 02 · Circuit Rogue/)).toBeInTheDocument();
+  });
+
+  it("opens the shop room with unaffordable buys disabled and resolves through the reward draft", async () => {
+    const user = userEvent.setup();
+    const memory = createMemoryRepository({
+      profile: makeProfile(),
+      livingRun: null,
+    });
+    const store = createStore(memory.repository, [
+      "run-shop",
+      "commit-shop-start",
+    ]);
+    renderApp(store);
+    await screen.findByRole("heading", { name: "Choose your signal." });
+
+    await user.click(screen.getByRole("button", { name: "Start new run" }));
+    await screen.findByRole("heading", {
+      name: "Pick the next pressure point.",
+    });
+    await waitFor(
+      () =>
+        expect(store.getSnapshot().livingRun?.routeState?.offers).toHaveLength(4),
+      { timeout: 5000 },
+    );
+
+    await user.click(screen.getByRole("radio", { name: "shop // Patchbay" }));
+    await user.click(screen.getByRole("button", { name: "Enter selected room" }));
+    await waitFor(() =>
+      expect(store.getSnapshot().livingRun?.phase).toBe("room"),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: /Patchbay \/\/ Shop/ }),
+    ).toBeInTheDocument();
+    const buys = screen.getAllByRole("button", { name: "Buy" });
+    expect(buys.length).toBeGreaterThan(0);
+    for (const buy of buys) {
+      expect(buy).toBeDisabled();
+    }
+    expect(screen.getAllByText("Not enough room shards").length).toBeGreaterThan(0);
+
+    await user.click(
+      screen.getByRole("button", { name: "Advance to reward draft" }),
+    );
+    await waitFor(() =>
+      expect(store.getSnapshot().livingRun?.phase).toBe("reward"),
+    );
+    await screen.findByRole("radiogroup", { name: "Three reward cards" });
   });
 });

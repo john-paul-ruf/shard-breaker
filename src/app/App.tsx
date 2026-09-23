@@ -7,8 +7,18 @@ import {
 
 import type { AppCommand } from "./commands";
 import type { ContentCatalog, ContentId } from "../domain/content/catalog";
+import type {
+  RecoveryState,
+  RoomState,
+  ShopState,
+} from "../domain/run/model";
+import { ROUTE_SUPPORT_DEFINITIONS } from "../domain/content/rooms";
 import { HomeScreen } from "../ui/screens/HomeScreen";
 import type { HomeScreenViewModel } from "../ui/screens/HomeScreen";
+import { RewardsScreen } from "../ui/screens/RewardsScreen";
+import type { RewardsScreenViewModel } from "../ui/screens/RewardsScreen";
+import { RoomScreen } from "../ui/screens/RoomScreen";
+import type { RoomScreenViewModel } from "../ui/screens/RoomScreen";
 import { RouteMapScreen } from "../ui/screens/RouteMapScreen";
 import { createRouteMapScreenModel } from "../ui/screens/RouteMapScreen";
 import type { RouteMapScreenViewModel } from "../ui/screens/RouteMapScreen";
@@ -66,6 +76,14 @@ type HomeModelResult =
 
 type RouteMapModelResult =
   | { readonly ok: true; readonly model: RouteMapScreenViewModel }
+  | { readonly ok: false; readonly message: string };
+
+type RoomModelResult =
+  | { readonly ok: true; readonly model: RoomScreenViewModel }
+  | { readonly ok: false; readonly message: string };
+
+type RewardsModelResult =
+  | { readonly ok: true; readonly model: RewardsScreenViewModel }
   | { readonly ok: false; readonly message: string };
 
 function isUnlocked(
@@ -179,6 +197,158 @@ function createRouteMapModel(
   };
 }
 
+function roomDisplayName(
+  catalog: ContentCatalog,
+  roomType: RoomState["roomType"],
+): string {
+  const room = catalog
+    .listRooms()
+    .find((definition) => definition.roomType === roomType);
+  return room === undefined ? roomType : room.displayName;
+}
+
+function roomSummary(
+  catalog: ContentCatalog,
+  roomType: RoomState["roomType"],
+): string {
+  const room = catalog
+    .listRooms()
+    .find((definition) => definition.roomType === roomType);
+  return room === undefined ? "" : room.summary;
+}
+
+function objectiveNamesFor(
+  roomState: RoomState,
+): readonly string[] {
+  return roomState.objectiveIds.map((objectiveId) => {
+    const support = ROUTE_SUPPORT_DEFINITIONS.find(
+      (definition) => definition.id === objectiveId,
+    );
+    return support === undefined ? objectiveId : support.displayName;
+  });
+}
+
+function createRoomModel(
+  state: AppState,
+  catalog: ContentCatalog,
+): RoomModelResult {
+  const livingRun = state.livingRun;
+  if (state.loadStatus !== "ready" || livingRun === null) {
+    return {
+      ok: false,
+      message: "The room screen is not available without a living run.",
+    };
+  }
+
+  const classResult = catalog.getClass(livingRun.classId);
+  if (!classResult.ok) {
+    return {
+      ok: false,
+      message: "The saved living run references an unknown class.",
+    };
+  }
+
+  const roomState: RoomState | null = livingRun.roomState;
+  if (roomState === null) {
+    return {
+      ok: false,
+      message: "The saved living run has no committed room to display.",
+    };
+  }
+
+  let shop: RoomScreenViewModel["shop"] = null;
+  const shopState: ShopState | null = roomState.shop;
+  if (shopState !== null) {
+    const items = shopState.inventory.map((item) => {
+      const serviceResult = catalog.getShopService(item.itemId);
+      return {
+        itemId: item.itemId,
+        displayName: serviceResult.ok
+          ? serviceResult.value.displayName
+          : item.itemId,
+        price: item.price,
+        isPurchased: shopState.purchasedItemIds.includes(item.itemId),
+        isAffordable: livingRun.runCurrency >= item.price,
+      };
+    });
+    shop = { items, hasItems: items.length > 0 };
+  }
+
+  const recovery: RecoveryState | null = roomState.recovery;
+
+  return {
+    ok: true,
+    model: {
+      runId: livingRun.runId,
+      className: classResult.value.displayName,
+      depth: livingRun.depth,
+      cycle: livingRun.cycle,
+      roomType: roomState.roomType,
+      roomName: roomDisplayName(catalog, roomState.roomType),
+      roomSummary: roomSummary(catalog, roomState.roomType),
+      objectiveNames: objectiveNamesFor(roomState),
+      integrityCurrent: livingRun.integrityCurrent,
+      integrityMaximum: livingRun.integrityMax,
+      runCurrency: livingRun.runCurrency,
+      shop,
+      recovery:
+        recovery === null
+          ? null
+          : {
+              restoreAmount: recovery.restoreAmount,
+              isCommitted: recovery.committed,
+            },
+      isBossRoom: roomState.roomType === "boss",
+      roomStatus: roomState.status,
+      isBusy: state.isBusy,
+      saveSignal: state.saveSignal,
+    },
+  };
+}
+
+function createRewardsModel(
+  state: AppState,
+  catalog: ContentCatalog,
+): RewardsModelResult {
+  const livingRun = state.livingRun;
+  if (state.loadStatus !== "ready" || livingRun === null) {
+    return {
+      ok: false,
+      message: "The reward draft is not available without a living run.",
+    };
+  }
+
+  const classResult = catalog.getClass(livingRun.classId);
+  if (!classResult.ok) {
+    return {
+      ok: false,
+      message: "The saved living run references an unknown class.",
+    };
+  }
+
+  if (livingRun.rewardState === null) {
+    return {
+      ok: false,
+      message: "The saved living run has no reward draft to display.",
+    };
+  }
+
+  return {
+    ok: true,
+    model: {
+      runId: livingRun.runId,
+      className: classResult.value.displayName,
+      depth: livingRun.depth,
+      cycle: livingRun.cycle,
+      rewardCards: livingRun.rewardState.cards,
+      build: livingRun.build,
+      isBusy: state.isBusy,
+      saveSignal: state.saveSignal,
+      catalog,
+    },
+  };
+}
+
 /** Bind the external application store to the implemented launch screen. */
 export function App({ store, catalog }: AppProps) {
   const initializedStoreRef = useRef<AppStore | null>(null);
@@ -212,6 +382,24 @@ export function App({ store, catalog }: AppProps) {
   }
 
   const screen = deriveScreen(state);
+
+  if (screen.id === "room") {
+    const roomModel = createRoomModel(state, catalog);
+    return roomModel.ok ? (
+      <RoomScreen model={roomModel.model} dispatch={dispatch} />
+    ) : (
+      <ErrorShell message={roomModel.message} />
+    );
+  }
+
+  if (screen.id === "reward") {
+    const rewardsModel = createRewardsModel(state, catalog);
+    return rewardsModel.ok ? (
+      <RewardsScreen model={rewardsModel.model} dispatch={dispatch} />
+    ) : (
+      <ErrorShell message={rewardsModel.message} />
+    );
+  }
 
   if (screen.id === "route-map") {
     const routeModel = createRouteMapModel(state, catalog);
