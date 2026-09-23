@@ -95,6 +95,7 @@ not mutate domain state or call IndexedDB directly.
 | 2026-08-29 | Imported Genesis M01 contract into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |
 | 2026-09-14 | route-drafting SESSION-02: Added route-map screen descriptor and App routing for phase "route". |
+| 2026-09-22 | room-resolution SESSION-02: Added room/buy-shop-item, room/commit-recovery, room/resolve, reward/select app commands and store handlers with saveCheckpoint persistence and replacement-disclosure save signal. |
 
 <!-- SESSION-02 -->
 ## M01 — Application shell and command store (`./src/app/`)
@@ -118,3 +119,17 @@ not mutate domain state or call IndexedDB directly.
 - `appStore.test.ts` — 5 store integration tests: materialize → offers populated,
   select → selection persisted, commit → room phase, re-materialize rejected,
   unknown offer rejected.
+
+<!-- room-resolution SESSION-02 -->
+## Room app commands (room-resolution SESSION-02)
+
+- `commands.ts` — `AppCommand` extended with `room/buy-shop-item` (carries
+  `itemId`), `room/commit-recovery`, `room/resolve`, `reward/select` (carries
+  `cardId`).
+- `appStore.ts` — four new handlers (`handleBuyShopItem`,
+  `handleCommitRecovery`, `handleResolveRoom`, `handleSelectReward`) following
+  the existing `saveCheckpoint` handler pattern; `isDurableCommand` and the
+  `handleCommand` switch extended; `runRejectionMessage` covers all ten new
+  rejection codes. `handleSelectReward` derives the replacement disclosure from
+  the pre/post build (head-change on a full side) and publishes "Reward
+  selected; replaced <name>. Advancing to Depth N."

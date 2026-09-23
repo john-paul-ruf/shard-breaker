@@ -59,6 +59,7 @@
   canonical export/digest, malicious/oversized imports, and living-run isolation.
 
 ## Change History
+| 2026-09-22 | room-resolution SESSION-02: Extended rewardStateSchema with nullable displacedRewardId/displacedSlot fields; empty-route rules untouched. |
 
 | Date | Change |
 |------|--------|
@@ -98,3 +99,12 @@
   `put`s the proposed run, returns `{ profile, livingRun: proposedRun }`.
 - `repositories.test.ts` — 5 checkpoint tests: success with populated routeState,
   stale revision, missing living run, populated roomState, malformed proposed run.
+
+<!-- room-resolution SESSION-02 -->
+## Reward replacement schema (room-resolution SESSION-02)
+
+- `src/persistence/validation.ts` — `rewardStateSchema` gains
+  `displacedRewardId` (nullable content ID) and `displacedSlot` (nullable
+  `"active" | "passive"` enum) — Correction 2's durable replacement record.
+  No other rule touched; the `invalid-empty-route-depth` invariant and its
+  "empty route after depth one" test row pass unchanged (Correction 1).

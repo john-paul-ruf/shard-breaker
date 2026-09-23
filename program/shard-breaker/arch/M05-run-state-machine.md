@@ -61,6 +61,7 @@
 |------|--------|
 | 2026-08-29 | Imported Genesis M05 contract into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-01: Added MaterializeRoute/SelectRouteOffer/CommitRoute commands, reducer transitions with generator-to-snapshot mapping, save-checkpoint persistence instruction. |
+| 2026-09-22 | room-resolution SESSION-02: Added BuyShopItem/CommitRecovery/ResolveRoom/SelectReward commands, four reducer transitions with generator-to-snapshot mapping, RewardState replacement fields, and ten new rejection codes. |
 
 <!-- SESSION-02 -->
 ## M05 — Run and profile state machine (`./src/domain/run/`)
@@ -117,3 +118,32 @@
 - `route.test.ts` — 22 domain tests covering materialize (4 offers, boss depth,
   idempotent), select (valid, unknown, empty, committed), commit (phase transition,
   room population, boss-depth, rejections), and `validateLivingRun` on all results.
+<!-- room-resolution SESSION-02 -->
+## Room resolution commands (room-resolution SESSION-02)
+
+- `commands.ts` — `RunCommand` extended with `BuyShopItem` (carries `itemId`),
+  `CommitRecovery`, `ResolveRoom`, `SelectReward` (carries `cardId`); all carry
+  `runId` / `expectedRevision` / `commitId` / `now`. `RunRejection` gains ten
+  codes: `shop-item-already-purchased`, `insufficient-currency`,
+  `unknown-shop-item`, `room-not-shop-type`, `room-not-recovery-type`,
+  `room-already-resolved`, `recovery-already-committed`,
+  `combat-not-implemented`, `reward-already-selected`, `unknown-reward-card`.
+  New exported type `RoomTypeForRejection`. No new persistence instruction
+  kinds — all four transitions emit the existing `save-checkpoint`.
+- `model.ts` (additive) — `RewardState` gains `displacedRewardId: ContentId | null`
+  and `displacedSlot: "active" | "passive" | null`. As of this session's reducer the
+  fields are always `null` on produced states (the applied record is transient);
+  they are part of the durable schema for the replacement contract (CA-05) and
+  future summary surfaces.
+- `reducer.ts` — `runReducer` handles the four new commands.
+  `resolveRoom` transitions `phase: "room" → "reward"`, nulls `roomState`
+  (phase-state coherence requires only the phase's own state), and populates
+  `rewardState` from `generateRewardDraft` via private `mapRewardCard`/
+  `mapRewardDraft` helpers (frozen, field-preserving). `selectReward` applies
+  the card to the build (append, or replace-earliest on a full side),
+  increments depth/cycle, materializes the next route via
+  `generateRouteOptions` + `mapRouteOffer`, transitions
+  `phase: "reward" → "route"`, and nulls `rewardState` (CAP-05/CA-05
+  observable success; phase-state coherence). Displacement is disclosed by the
+  store signal, not by a retained record. Private `requireOpenRoomPhase`
+  helper factored for the three room-phase transitions.
