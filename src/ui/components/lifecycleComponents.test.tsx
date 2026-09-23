@@ -6,10 +6,12 @@ import userEvent from "@testing-library/user-event";
 import { AppStatusBar } from "./AppStatusBar";
 import { ConfirmationDialog } from "./ConfirmationDialog";
 import { IntegrityMeter } from "./IntegrityMeter";
+import { RewardCard } from "./RewardCard";
 import { RouteCard } from "./RouteCard";
 import { SaveSignal } from "./SaveSignal";
+import type { ContentId } from "../../domain/content/catalog";
 import type { RoomDefinition } from "../../domain/content/rooms";
-import type { RouteOfferSnapshot } from "../../domain/run/model";
+import type { RewardCardSnapshot, RouteOfferSnapshot } from "../../domain/run/model";
 import { createContentCatalog } from "../../domain/content/catalog";
 
 // Testing Library does not auto-clean without global test hooks (globals are
@@ -464,5 +466,156 @@ describe("RouteCard", () => {
     const radio = screen.getByRole("radio", { name: "shop // Patchbay" });
     expect(radio).toHaveTextContent("None");
     expect(radio).toHaveTextContent("3 items // 028 min");
+  });
+});
+
+describe("RewardCard", () => {
+  const REWARD_EVENT_KEY = "route:content-1:run-1:1:room:room-shop-patchbay:reward";
+
+  function makeCard({
+    rewardType = "skill",
+    enhancementIds = [],
+    materialCost = 7,
+  }: {
+    readonly rewardType?: "skill" | "equipment";
+    readonly enhancementIds?: readonly string[];
+    readonly materialCost?: number;
+  } = {}): RewardCardSnapshot {
+    return {
+      cardId: `${REWARD_EVENT_KEY}:card:test:0`,
+      baseRewardId: (rewardType === "skill"
+        ? "skill-phase-shunt"
+        : "equipment-fractal-core") as ContentId,
+      rewardType,
+      enhancementIds: enhancementIds.map((id) => id as ContentId),
+      rolledParams: [],
+      materialCost,
+      tradeoffId: null,
+    };
+  }
+
+  function renderCard(
+    overrides: Partial<React.ComponentProps<typeof RewardCard>> = {},
+  ) {
+    const props: React.ComponentProps<typeof RewardCard> = {
+      card: makeCard({ enhancementIds: ["enhancement-charged"] }),
+      baseRewardName: "Phase Shunt",
+      baseRewardDescription: "Pass the ball through the first wall it touches.",
+      enhancementNames: ["Charged"],
+      enhancementDescriptions: [
+        "The granted item arrives already primed for the floor.",
+      ],
+      displacedRewardName: null,
+      isSelected: false,
+      isBusy: false,
+      onSelect: vi.fn(),
+      ...overrides,
+    };
+    return render(<RewardCard {...props} />);
+  }
+
+  it("renders an unselected radio with the reward type accent and name", () => {
+    renderCard();
+    const radio = screen.getByRole("radio", { name: "skill // Phase Shunt" });
+    expect(radio).toHaveAttribute("aria-checked", "false");
+    expect(radio).toHaveClass("reward-card--skill");
+    expect(radio).not.toHaveClass("reward-card--selected");
+    expect(radio).toHaveTextContent("Phase Shunt");
+    expect(radio).toHaveTextContent("Base reward // active skill");
+  });
+
+  it("reflects selection through aria-checked and the selected class", () => {
+    renderCard({ isSelected: true });
+    const radio = screen.getByRole("radio", { name: "skill // Phase Shunt" });
+    expect(radio).toHaveAttribute("aria-checked", "true");
+    expect(radio).toHaveClass("reward-card--selected");
+    expect(within(radio).getByText("Selected")).toBeInTheDocument();
+  });
+
+  it("renders equipment cards with the equipment accent and base label", () => {
+    renderCard({
+      card: makeCard({ rewardType: "equipment" }),
+      baseRewardName: "Fractal Core",
+      baseRewardDescription: "Each wall hit banks a small shard of bonus currency.",
+      enhancementNames: [],
+      enhancementDescriptions: [],
+    });
+    const radio = screen.getByRole("radio", { name: "equipment // Fractal Core" });
+    expect(radio).toHaveClass("reward-card--equipment");
+    expect(radio).toHaveTextContent("Base reward // passive equipment");
+  });
+
+  it("exposes enhancement labels, material cost, and trade-off row", () => {
+    renderCard({ card: makeCard({ materialCost: 4 }) });
+    const radio = screen.getByRole("radio", { name: "skill // Phase Shunt" });
+    expect(radio).toHaveTextContent("Enhancement / Charged");
+    expect(radio).toHaveTextContent(
+      "The granted item arrives already primed for the floor.",
+    );
+    expect(radio).toHaveTextContent("4 room shards");
+    expect(radio).toHaveTextContent("Trade-off No trade-off");
+  });
+
+  it("shows the replacement disclosure only when a displaced reward is supplied", () => {
+    renderCard({ displacedRewardName: "Prism Burst" });
+    const radio = screen.getByRole("radio", { name: "skill // Phase Shunt" });
+    expect(radio).toHaveTextContent("REPLACES");
+    expect(radio).toHaveTextContent("Prism Burst");
+    expect(radio).toHaveTextContent("swap shown before commit");
+  });
+
+  it("omits the replacement disclosure when the receiving side has room", () => {
+    renderCard();
+    const radio = screen.getByRole("radio", { name: "skill // Phase Shunt" });
+    expect(radio).not.toHaveTextContent("REPLACES");
+  });
+
+  it("disables the card and sets aria-disabled while busy", () => {
+    renderCard({ isBusy: true });
+    const radio = screen.getByRole("radio", { name: "skill // Phase Shunt" });
+    expect(radio).toBeDisabled();
+    expect(radio).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("invokes onSelect on click while not busy", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    renderCard({ onSelect });
+    await user.click(screen.getByRole("radio", { name: "skill // Phase Shunt" }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps keyboard radio roving focus inside a radiogroup", () => {
+    render(
+      <div role="radiogroup" aria-label="Three reward cards">
+        <RewardCard
+          card={makeCard()}
+          baseRewardName="Phase Shunt"
+          baseRewardDescription="Pass through walls."
+          enhancementNames={[]}
+          enhancementDescriptions={[]}
+          displacedRewardName={null}
+          isSelected={false}
+          isBusy={false}
+          onSelect={vi.fn()}
+        />
+        <RewardCard
+          card={makeCard({ rewardType: "equipment" })}
+          baseRewardName="Fractal Core"
+          baseRewardDescription="Bank bonus shards."
+          enhancementNames={[]}
+          enhancementDescriptions={[]}
+          displacedRewardName={null}
+          isSelected={false}
+          isBusy={false}
+          onSelect={vi.fn()}
+        />
+      </div>,
+    );
+    const first = screen.getByRole("radio", { name: "skill // Phase Shunt" });
+    const second = screen.getByRole("radio", { name: "equipment // Fractal Core" });
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(second).toHaveFocus();
   });
 });
