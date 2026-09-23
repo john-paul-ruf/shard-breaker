@@ -43,7 +43,40 @@ export type RunCommand =
       readonly expectedRevision: number;
       readonly commitId: string;
       readonly now: number;
+    }
+  | {
+      readonly type: "BuyShopItem";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly itemId: string;
+      readonly commitId: string;
+      readonly now: number;
+    }
+  | {
+      readonly type: "CommitRecovery";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly commitId: string;
+      readonly now: number;
+    }
+  | {
+      readonly type: "ResolveRoom";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly commitId: string;
+      readonly now: number;
+    }
+  | {
+      readonly type: "SelectReward";
+      readonly runId: string;
+      readonly expectedRevision: number;
+      readonly cardId: string;
+      readonly commitId: string;
+      readonly now: number;
     };
+
+/** Room types a room-scoped rejection can name. */
+export type RoomTypeForRejection = "battle" | "elite" | "shop" | "recovery" | "boss";
 
 /** Typed, discriminated reasons a lifecycle command is rejected. */
 export type RunRejection =
@@ -60,7 +93,17 @@ export type RunRejection =
   | { readonly code: "route-not-materialized"; readonly runId: string }
   | { readonly code: "route-already-committed"; readonly runId: string }
   | { readonly code: "unknown-route-offer"; readonly offerId: string }
-  | { readonly code: "route-selection-missing"; readonly runId: string };
+  | { readonly code: "route-selection-missing"; readonly runId: string }
+  | { readonly code: "shop-item-already-purchased"; readonly itemId: ContentId }
+  | { readonly code: "insufficient-currency"; readonly required: number; readonly available: number }
+  | { readonly code: "unknown-shop-item"; readonly itemId: ContentId }
+  | { readonly code: "room-not-shop-type"; readonly roomType: RoomTypeForRejection }
+  | { readonly code: "room-not-recovery-type"; readonly roomType: RoomTypeForRejection }
+  | { readonly code: "room-already-resolved"; readonly roomId: string }
+  | { readonly code: "recovery-already-committed"; readonly roomId: string }
+  | { readonly code: "combat-not-implemented"; readonly roomType: RoomTypeForRejection }
+  | { readonly code: "reward-already-selected"; readonly status: "selected" | "applied" }
+  | { readonly code: "unknown-reward-card"; readonly cardId: string };
 
 /**
  * Durable write intent emitted alongside a successful transition so adapters

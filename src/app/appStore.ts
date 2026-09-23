@@ -114,6 +114,26 @@ function runRejectionMessage(error: RunRejection): string {
       return "The selected route offer is not part of the current route.";
     case "route-selection-missing":
       return "Select a route offer before committing to a room.";
+    case "shop-item-already-purchased":
+      return "That shop item has already been purchased this room.";
+    case "insufficient-currency":
+      return "Not enough run currency for that purchase.";
+    case "unknown-shop-item":
+      return "That item is not part of this shop's inventory.";
+    case "room-not-shop-type":
+      return "Purchases are only available in a shop room.";
+    case "room-not-recovery-type":
+      return "Recovery is only available in a recovery room.";
+    case "room-already-resolved":
+      return "This room has already been resolved.";
+    case "recovery-already-committed":
+      return "Recovery has already been committed this room.";
+    case "combat-not-implemented":
+      return "The combat engine is not available yet, so this room cannot be resolved.";
+    case "reward-already-selected":
+      return "A reward has already been selected from this draft.";
+    case "unknown-reward-card":
+      return "The selected reward card is not part of the current draft.";
   }
 }
 

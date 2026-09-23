@@ -229,6 +229,9 @@ export interface RewardState {
   readonly selectedCardId: string | null;
   readonly selectionCommitId: string | null;
   readonly status: "offered" | "selected" | "applied";
+  /** Set when the applied reward displaced an earlier item; null otherwise. */
+  readonly displacedRewardId: ContentId | null;
+  readonly displacedSlot: "active" | "passive" | null;
 }
 
 export interface LivingRun {

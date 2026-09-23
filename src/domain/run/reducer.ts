@@ -1,9 +1,19 @@
-import type { ContentCatalog } from "../content/catalog";
-import type { GeneratedRouteOffer, GeneratedRoomCandidate } from "../random/generators";
-import { generateRouteOptions, generateRoomCandidate } from "../random/generators";
+import type { ContentCatalog, ContentId } from "../content/catalog";
+import type {
+  GeneratedRewardCard,
+  GeneratedRouteOffer,
+  GeneratedRoomCandidate,
+} from "../random/generators";
+import {
+  generateRewardDraft,
+  generateRouteOptions,
+  generateRoomCandidate,
+} from "../random/generators";
 import type { RunCommand, RunRejection, RunTransition } from "./commands";
 import type {
   LivingRun,
+  RewardCardSnapshot,
+  RewardState,
   RouteOfferSnapshot,
   RoomState,
   RouteState,
@@ -11,7 +21,7 @@ import type {
   ThreatProfileSnapshot,
 } from "./model";
 import { createInitialLivingRun } from "./model";
-import { isBossDepth, routeEventKey } from "./routes";
+import { cycleForDepth, isBossDepth, routeEventKey } from "./routes";
 import { validateRunState } from "./validation";
 
 function reject(state: RunState, error: RunRejection): RunTransition {
@@ -248,6 +258,43 @@ function mapRoomCandidate(candidate: GeneratedRoomCandidate): RoomState {
   });
 }
 
+function mapRewardCard(card: GeneratedRewardCard): RewardCardSnapshot {
+  return Object.freeze({
+    cardId: card.cardId,
+    baseRewardId: card.baseRewardId,
+    rewardType: card.rewardType,
+    enhancementIds: Object.freeze([...card.enhancementIds]),
+    rolledParams: Object.freeze([...card.rolledParams]),
+    materialCost: card.materialCost,
+    tradeoffId: card.tradeoffId,
+  });
+}
+
+function mapRewardDraft(draft: {
+  readonly eventKey: string;
+  readonly sourceRoomId: string;
+  readonly cards: readonly [
+    GeneratedRewardCard,
+    GeneratedRewardCard,
+    GeneratedRewardCard,
+  ];
+}): RewardState {
+  return Object.freeze({
+    eventKey: draft.eventKey,
+    sourceRoomId: draft.sourceRoomId,
+    cards: Object.freeze([
+      mapRewardCard(draft.cards[0]),
+      mapRewardCard(draft.cards[1]),
+      mapRewardCard(draft.cards[2]),
+    ]) as RewardState["cards"],
+    selectedCardId: null,
+    selectionCommitId: null,
+    status: "offered",
+    displacedRewardId: null,
+    displacedSlot: null,
+  });
+}
+
 function materializeRoute(
   state: RunState,
   command: Extract<RunCommand, { type: "MaterializeRoute" }>,
@@ -471,6 +518,369 @@ function commitRoute(
   };
 }
 
+function requireOpenRoomPhase(
+  state: RunState,
+  command: { readonly runId: string; readonly expectedRevision: number },
+): { ok: true; run: LivingRun; room: RoomState } | { ok: false; transition: RunTransition } {
+  const living = requireLivingRun(state, command);
+  if (!living.ok) return living;
+  const run = living.run;
+
+  if (run.phase !== "room" || run.roomState === null) {
+    return {
+      ok: false,
+      transition: reject(state, { code: "invalid-state", issues: ["room phase required"] }),
+    };
+  }
+  return { ok: true, run, room: run.roomState };
+}
+
+function buyShopItem(
+  state: RunState,
+  command: Extract<RunCommand, { type: "BuyShopItem" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  let badField = routeCommandMetadataField(command);
+  if (badField === null && !isNonEmptyString(command.itemId)) {
+    badField = "itemId";
+  }
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const roomPhase = requireOpenRoomPhase(state, command);
+  if (!roomPhase.ok) return roomPhase.transition;
+  const { run, room } = roomPhase;
+
+  if (room.roomType !== "shop") {
+    return reject(state, { code: "room-not-shop-type", roomType: room.roomType });
+  }
+  if (room.status === "resolved") {
+    return reject(state, { code: "room-already-resolved", roomId: room.roomId });
+  }
+  const shop = room.shop;
+  if (shop === null) {
+    return reject(state, { code: "invalid-state", issues: ["shop state required"] });
+  }
+
+  const item = shop.inventory.find((candidate) => candidate.itemId === command.itemId);
+  if (item === undefined) {
+    return reject(state, { code: "unknown-shop-item", itemId: command.itemId as ContentId });
+  }
+  if (shop.purchasedItemIds.includes(item.itemId)) {
+    return reject(state, { code: "shop-item-already-purchased", itemId: item.itemId });
+  }
+  if (run.runCurrency < item.price) {
+    return reject(state, {
+      code: "insufficient-currency",
+      required: item.price,
+      available: run.runCurrency,
+    });
+  }
+
+  const updatedRoom: RoomState = Object.freeze({
+    ...room,
+    status: "in_progress",
+    shop: Object.freeze({
+      ...shop,
+      purchasedItemIds: Object.freeze([...shop.purchasedItemIds, item.itemId]),
+    }),
+  });
+
+  const updatedRun: LivingRun = {
+    ...run,
+    roomState: updatedRoom,
+    runCurrency: run.runCurrency - item.price,
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
+function commitRecovery(
+  state: RunState,
+  command: Extract<RunCommand, { type: "CommitRecovery" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  const badField = routeCommandMetadataField(command);
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const roomPhase = requireOpenRoomPhase(state, command);
+  if (!roomPhase.ok) return roomPhase.transition;
+  const { run, room } = roomPhase;
+
+  if (room.roomType !== "recovery") {
+    return reject(state, { code: "room-not-recovery-type", roomType: room.roomType });
+  }
+  if (room.status === "resolved") {
+    return reject(state, { code: "room-already-resolved", roomId: room.roomId });
+  }
+  const recovery = room.recovery;
+  if (recovery === null) {
+    return reject(state, { code: "invalid-state", issues: ["recovery state required"] });
+  }
+  if (recovery.committed) {
+    return reject(state, { code: "recovery-already-committed", roomId: room.roomId });
+  }
+
+  const updatedRoom: RoomState = Object.freeze({
+    ...room,
+    status: "in_progress",
+    recovery: Object.freeze({
+      ...recovery,
+      committed: true,
+      commitId: command.commitId,
+    }),
+  });
+
+  const updatedRun: LivingRun = {
+    ...run,
+    roomState: updatedRoom,
+    integrityCurrent: Math.min(
+      run.integrityCurrent + recovery.restoreAmount,
+      run.integrityMax,
+    ),
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
+function resolveRoom(
+  state: RunState,
+  command: Extract<RunCommand, { type: "ResolveRoom" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  const badField = routeCommandMetadataField(command);
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const roomPhase = requireOpenRoomPhase(state, command);
+  if (!roomPhase.ok) return roomPhase.transition;
+  const { run, room } = roomPhase;
+
+  if (room.status === "resolved") {
+    return reject(state, { code: "room-already-resolved", roomId: room.roomId });
+  }
+  if (
+    room.roomType === "battle" ||
+    room.roomType === "elite" ||
+    room.roomType === "boss"
+  ) {
+    return reject(state, { code: "combat-not-implemented", roomType: room.roomType });
+  }
+
+  const rewardDraft = generateRewardDraft(catalog, {
+    seed: run.seed,
+    contentVersion: run.contentVersion,
+    runId: run.runId,
+    depth: run.depth,
+    cycle: run.cycle,
+    roomEventKey: room.eventKey,
+    roomType: room.roomType,
+    activeSkillSlotsUsed: run.build.activeSkillIds.length,
+    passiveEquipmentSlotsUsed: run.build.passiveEquipmentIds.length,
+  });
+
+  const updatedRun: LivingRun = {
+    ...run,
+    phase: "reward",
+    roomState: null,
+    rewardState: mapRewardDraft(rewardDraft),
+    progress: { ...run.progress, roomsResolved: run.progress.roomsResolved + 1 },
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
+function selectReward(
+  state: RunState,
+  command: Extract<RunCommand, { type: "SelectReward" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  let badField = routeCommandMetadataField(command);
+  if (badField === null && !isNonEmptyString(command.cardId)) {
+    badField = "cardId";
+  }
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  const living = requireLivingRun(state, command);
+  if (!living.ok) return living.transition;
+  const run = living.run;
+
+  const rewardState = run.rewardState;
+  if (run.phase !== "reward" || rewardState === null) {
+    return reject(state, { code: "invalid-state", issues: ["reward phase required"] });
+  }
+  if (rewardState.status !== "offered") {
+    return reject(state, { code: "reward-already-selected", status: rewardState.status });
+  }
+  const card = rewardState.cards.find((candidate) => candidate.cardId === command.cardId);
+  if (card === undefined) {
+    return reject(state, { code: "unknown-reward-card", cardId: command.cardId });
+  }
+
+  const build = run.build;
+  let activeSkillIds = build.activeSkillIds;
+  let passiveEquipmentIds = build.passiveEquipmentIds;
+
+  if (card.rewardType === "skill") {
+    if (build.activeSkillIds.length < 3) {
+      activeSkillIds = Object.freeze([...build.activeSkillIds, card.baseRewardId]);
+    } else {
+      activeSkillIds = Object.freeze([
+        ...build.activeSkillIds.slice(1),
+        card.baseRewardId,
+      ]);
+    }
+  } else if (card.rewardType === "equipment") {
+    if (build.passiveEquipmentIds.length < 4) {
+      passiveEquipmentIds = Object.freeze([
+        ...build.passiveEquipmentIds,
+        card.baseRewardId,
+      ]);
+    } else {
+      passiveEquipmentIds = Object.freeze([
+        ...build.passiveEquipmentIds.slice(1),
+        card.baseRewardId,
+      ]);
+    }
+  }
+
+  const newDepth = run.depth + 1;
+  const newCycle = cycleForDepth(newDepth);
+  const newRouteEventKey = routeEventKey(run.runId, run.contentVersion, newDepth);
+  const offers = generateRouteOptions(catalog, {
+    seed: run.seed,
+    contentVersion: run.contentVersion,
+    runId: run.runId,
+    depth: newDepth,
+    cycle: newCycle,
+    integrityCurrent: run.integrityCurrent,
+    integrityMax: run.integrityMax,
+    runCurrency: run.runCurrency,
+    routeEventKey: newRouteEventKey,
+  });
+
+  const newRouteState: RouteState = Object.freeze({
+    eventKey: newRouteEventKey,
+    offers: Object.freeze(offers.map(mapRouteOffer)),
+    selectedOfferId: null,
+    committed: false,
+  });
+
+  const updatedRun: LivingRun = {
+    ...run,
+    build: Object.freeze({
+      ...build,
+      activeSkillIds,
+      passiveEquipmentIds,
+    }),
+    phase: "route",
+    depth: newDepth,
+    cycle: newCycle,
+    routeState: newRouteState,
+    rewardState: null,
+    revision: run.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+
+  const newState: RunState = { profile: state.profile, livingRun: updatedRun };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "save-checkpoint",
+      runId: run.runId,
+      commitId: command.commitId,
+      expectedRevision: command.expectedRevision,
+    },
+  };
+}
+
 /**
  * Pure lifecycle transition. Given the current authoritative state and a
  * serializable command, it returns either the next state plus an idempotent
@@ -493,5 +903,13 @@ export function runReducer(
       return selectRouteOffer(state, command, catalog);
     case "CommitRoute":
       return commitRoute(state, command, catalog);
+    case "BuyShopItem":
+      return buyShopItem(state, command, catalog);
+    case "CommitRecovery":
+      return commitRecovery(state, command, catalog);
+    case "ResolveRoom":
+      return resolveRoom(state, command, catalog);
+    case "SelectReward":
+      return selectReward(state, command, catalog);
   }
 }

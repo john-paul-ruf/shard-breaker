@@ -97,6 +97,8 @@ function makeRewardRun(): LivingRun {
       selectedCardId: null,
       selectionCommitId: null,
       status: "offered",
+      displacedRewardId: null,
+      displacedSlot: null,
     },
   };
 }

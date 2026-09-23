@@ -428,6 +428,8 @@ const rewardStateSchema = strictObject({
   selectedCardId: boundedString().nullable(),
   selectionCommitId: boundedString().nullable(),
   status: z.enum(["offered", "selected", "applied"]),
+  displacedRewardId: contentIdSchema.nullable(),
+  displacedSlot: z.enum(["active", "passive"]).nullable(),
 }).superRefine((reward, context) => {
   const cardIds = reward.cards.map((card) => card.cardId);
   if (new Set(cardIds).size !== cardIds.length) {
