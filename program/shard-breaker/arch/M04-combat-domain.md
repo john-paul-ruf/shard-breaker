@@ -33,6 +33,7 @@
 | `./src/domain/combat/model.ts` | Stable world-space state and tagged commands/events |
 | `./src/domain/combat/layout.ts` | Seeded layout materialization and checkpoint round-trip |
 | `./src/domain/combat/rules.ts` | Fixed-timestep transitions, collision ordering, bounds, launch/loss/clear rules |
+| `./src/domain/combat/effects.ts` | Build-driven effect resolution into simulation modifiers |
 | `./src/domain/combat/bossState.ts` | Boss phases, telegraph timing, counters, compatible modifier effects |
 | `./src/domain/combat/results.ts` | Outcome identity, room scoping, and result validation helpers |
 
@@ -63,6 +64,7 @@
 |------|--------|
 | 2026-08-29 | Imported Genesis M04 contract into the Forge registry. |
 | 2026-09-23 | combat-engine SESSION-01: created `src/domain/combat/` (model/layout/rules/results) and extended M01 content with `enemies.ts` + `listEnemies()`/`getEnemy()` — see the fragment below. |
+| 2026-09-23 | combat-engine SESSION-02: added `effects.ts` (build-driven effect resolution) and consumed effects in `rules.ts` hooks — see the fragment below. |
 
 <!-- combat-engine SESSION-01 -->
 ## Combat core (combat-engine SESSION-01)
@@ -141,3 +143,51 @@ Pure, deterministic, DOM-free module. Imports only `content/*` (type-only),
 `src/persistence/validation` — the same test-only persistence edge
 `src/domain/run/room.test.ts` already establishes for the CA-01 proof. Not a
 runtime module edge.
+
+<!-- combat-engine SESSION-02 -->
+## Effect resolution (combat-engine SESSION-02)
+
+### `effects.ts` (new)
+- `EffectSnapshot` — bounded, frozen simulation modifiers:
+  `ballDamageBonus`, `impactForceBonus`, `hazardStepReduction`,
+  `extraCharges`, `pierceLayers`, `reboundWidenFactor`, `ballSpeedFactor`,
+  `primedSkillIds` (reserved; empty until a carrier lands),
+  `wallHitCurrencyRate` (consumed by S07's grant).
+- `NEUTRAL_EFFECTS` — zero-contribution snapshot; the pre-effect behavior.
+- `resolveEffects(catalog, build, rolledParams)` — build-driven snapshot:
+  enhancements `pierce`/`momentum` → damage (+ layers for pierce),
+  `amplitude` → impact force, `hazard-shield` → hazard softening,
+  `bonus-charges` → extra charges; equipment `soft-patch` → 1 hazard step,
+  `fractal-core` → currency rate 1. Skills deliberately not mapped here
+  (charge-gated; see `resolveVolleyEffects`). Unknown keys/IDs fail closed.
+- `resolveVolleyEffects(catalog, build, rolledParams, skillCharges)` —
+  spent skills (charge entry below maximum) contribute: `overclock` →
+  +0.25 speed (cap `MAX_BALL_SPEED_FACTOR = 1.25`), `shield-bash` → +1
+  impact, `rebound-lens` → ×1.5 rebound widening (cap
+  `MAX_REBOUND_WIDEN_FACTOR = 2`).
+- Simulatable keys recorded in `effects.ts`; presentational-only keys
+  (per the S02 State Update): enhancements `primed`, `charge-persistence`,
+  `haste`, `echo`, `stability`, `quick-recharge`, `focus`, `cleanup`,
+  `anchor`; skills `phase-shunt`, `prism-burst`, `null-thread`,
+  `specter-step`, `cascade`; equipment `arc-coil`, `static-ward`,
+  `mirror-plating`, `power-cell`, `echo-chip`, `hard-light`.
+
+### `rules.ts` (extended, backward compatible)
+- Optional trailing `EffectSnapshot` parameter (defaults to
+  `NEUTRAL_EFFECTS`) on `stepCombat(state, steps, effects?)` and
+  `launchBall(state, angle, effects?)`; `bendVelocity` softens by
+  `1 + stepReduction`; paddle bounce deviation scales by
+  `reboundWidenFactor`; hit damage scales by `impactForceBonus`; new
+  pierce-through path with `PIERCE_TRAVEL_PER_LAYER = 2` exported. All S01
+  call sites unchanged.
+
+### Mapping notes recorded by S02
+- The session sketch mapped `haste` → `ballSpeedFactor`; the authored `haste`
+  description is cooldown-based with no simulation target this feature, so it
+  is presentational-only and `overclock` (skill) → speed factor instead —
+  mapped per authored meaning.
+- `rolledParams` have no durable carrier after the committed `SelectReward`
+  (room-resolution decision 10); the resolver consumes equipment +
+  charge-gated skills with empty params, never invented values. The single
+  swap point is `ROLLED_PARAMS_CARRIER_LANDING = []` in `run/reducer.ts` —
+  prerequisite owned by S07/CA-13 planning.

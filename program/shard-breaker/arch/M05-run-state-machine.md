@@ -62,6 +62,7 @@
 | 2026-08-29 | Imported Genesis M05 contract into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-01: Added MaterializeRoute/SelectRouteOffer/CommitRoute commands, reducer transitions with generator-to-snapshot mapping, save-checkpoint persistence instruction. |
 | 2026-09-22 | room-resolution SESSION-02: Added BuyShopItem/CommitRecovery/ResolveRoom/SelectReward commands, four reducer transitions with generator-to-snapshot mapping, RewardState replacement fields, and ten new rejection codes. |
+| 2026-09-23 | combat-engine SESSION-02: Added LaunchBall/UseSkill/ReportCombatOutcome commands and reducer transitions consuming the combat domain (M03→M09), combat-phase validation invariants, and the narrowed `combat-not-implemented` ("clear first") semantics. |
 
 <!-- SESSION-02 -->
 ## M05 — Run and profile state machine (`./src/domain/run/`)
@@ -118,6 +119,7 @@
 - `route.test.ts` — 22 domain tests covering materialize (4 offers, boss depth,
   idempotent), select (valid, unknown, empty, committed), commit (phase transition,
   room population, boss-depth, rejections), and `validateLivingRun` on all results.
+
 <!-- room-resolution SESSION-02 -->
 ## Room resolution commands (room-resolution SESSION-02)
 
@@ -147,3 +149,29 @@
   observable success; phase-state coherence). Displacement is disclosed by the
   store signal, not by a retained record. Private `requireOpenRoomPhase`
   helper factored for the three room-phase transitions.
+
+<!-- combat-engine SESSION-02 -->
+## Combat transitions (combat-engine SESSION-02)
+
+- `commands.ts` — `CombatOutcomeMessage` (`{outcomeId, kind:
+  loss_of_ball|clear}`); commands `LaunchBall`, `UseSkill`,
+  `ReportCombatOutcome`; rejections `unknown-skill`, `skill-not-in-build`,
+  `skill-no-charges`, `combat-checkpoint-missing`, `invalid-aim-angle`,
+  `unknown-outcome-id`, `duplicate-outcome-id`.
+- `reducer.ts` — imports combat layout/rules/results/effects (realized M03→M09
+  runtime edge, prescribed by the plan); `combatContextFor` derives
+  `CombatInitContext` from run+room (loss ledger seeds the CA-02 index);
+  loss branch decrements `integrityCurrent` by exactly 1 and re-emits the
+  pre-launch checkpoint carrying the advanced loss count; `resolveRoom`
+  accepts combat rooms only after the room's clear outcome is on
+  `processedOutcomeIds` (`combat-not-implemented` code kept, meaning narrowed
+  to "clear first"). Launch persists the unchanged valid pre-launch checkpoint
+  and flips the room to `in_progress`; the live volley is the bridge's
+  ephemeral session (durable-write Custom Rule: live volleys are never
+  persisted, and `toCombatCheckpoint` throws on non-pre-launch phases).
+  Interim death boundary: at integrity 1 a loss commits with integrity 0 and
+  the room open in pre-launch; a loss at 0 is rejected `invalid-state`
+  (finalization = CAP-12/S07; no fabricated survival).
+- `validation.ts` — room-level invariants: combat↔utility checkpoint
+  coherence, skill charges within authored maximums, unresolved battle/elite
+  rooms must carry a non-defeated enemy, CA-02 ledger room-scoping/uniqueness.
