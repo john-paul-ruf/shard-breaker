@@ -401,10 +401,15 @@ describe("shop and room candidates", () => {
         roomType: offer.roomType,
         eventKey: offer.roomEventKey,
         status: "ready",
-        combatCheckpoint: null,
         processedOutcomeIds: [],
         resolutionCommitId: null,
       });
+      const isCombatRoom =
+        offer.roomType === "battle" || offer.roomType === "elite";
+      expect(room.combatCheckpoint === null).toBe(!isCombatRoom);
+      if (isCombatRoom) {
+        expect(room.combatCheckpoint?.kind).toBe("pre_launch");
+      }
       expect(Object.isFrozen(room)).toBe(true);
       expect(Object.isFrozen(room.objectiveIds)).toBe(true);
       expect(catalog.hasContent(room.threatProfile.formationId)).toBe(true);
@@ -449,6 +454,7 @@ describe("shop and room candidates", () => {
     );
 
     expect(first.boss).not.toBeNull();
+    expect(first.combatCheckpoint?.kind).toBe("pre_launch");
     expect(first.boss).toEqual(second.boss);
     expect(catalog.hasContent(first.boss!.archetypeId)).toBe(true);
     expect(first.boss).toMatchObject({

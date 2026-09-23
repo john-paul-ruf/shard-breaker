@@ -344,7 +344,8 @@ describe("runReducer — CommitRoute", () => {
       expect(run.roomState).not.toBeNull();
       const room = run.roomState!;
       expect(room.status).toBe("ready");
-      expect(room.combatCheckpoint).toBeNull();
+      expect(room.combatCheckpoint).not.toBeNull();
+      expect(room.combatCheckpoint?.kind).toBe("pre_launch");
       expect(room.processedOutcomeIds).toEqual([]);
       expect(room.resolutionCommitId).toBeNull();
       expect(room.threatProfile).toBeDefined();
