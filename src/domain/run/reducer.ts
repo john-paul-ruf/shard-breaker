@@ -684,7 +684,7 @@ function launchBallInRoom(
  * tional skill effects are the arena's display concern; charge-gated
  * simulation effects are resolved by the bridge per volley.
  */
-function useSkillInRoom(
+function applySkillInRoom(
   state: RunState,
   command: Extract<RunCommand, { type: "UseSkill" }>,
   catalog: ContentCatalog,
@@ -1313,7 +1313,7 @@ export function runReducer(
     case "LaunchBall":
       return launchBallInRoom(state, command, catalog);
     case "UseSkill":
-      return useSkillInRoom(state, command, catalog);
+      return applySkillInRoom(state, command, catalog);
     case "ReportCombatOutcome":
       return reportCombatOutcome(state, command, catalog);
     case "ResolveRoom":
