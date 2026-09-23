@@ -3,7 +3,6 @@ import type { CombatOutcome, CombatState } from "../domain/combat/model";
 import type { EffectSnapshot } from "../domain/combat/effects";
 import { NEUTRAL_EFFECTS } from "../domain/combat/effects";
 import { launchBall, movePaddle, stepCombat } from "../domain/combat/rules";
-import type { SkillChargeSnapshot } from "../domain/run/model";
 import { createFrameClock, startEngine } from "./engine";
 import type { EngineOptions, FrameClock } from "./engine";
 import { createRenderSnapshot } from "./renderer";
@@ -24,17 +23,18 @@ export type GameOutcomeMessage = Extract<
 export type SkillId = Extract<AppCommand, { readonly type: "combat/use-skill" }>["skillId"];
 
 /**
- * The volley resolver the caller provides: the session calls it once per
- * launch with the room's live inputs and threads the returned snapshot into
- * `launchBall`/`stepCombat` for that volley. The production implementation is
- * `resolveVolleyEffects(catalog, build, rolledParams, skillCharges)` (S02);
- * it is wired by the caller because the catalog and build are app-owned
- * state and `src/game/` imports only combat modules and
+ * The volley snapshot provider the caller supplies: the session calls it
+ * exactly once per launch and threads the returned snapshot into
+ * `launchBall`/`stepCombat` for that volley. It takes no arguments — the
+ * caller closes over the app-owned catalog, build, rolled params, and the
+ * room's durable skill charges, so the snapshot always reflects the freshest
+ * published checkpoint. The production implementation is
+ * `() => resolveVolleyEffects(catalog, build, rolledParams, skillCharges)`
+ * (S02's resolver); it is wired by the caller because the catalog and build
+ * are app-owned state and `src/game/` imports only combat modules and
  * `src/app/commands.ts` (arch M06 dependency rules).
  */
-export type VolleyEffectsResolver = (
-  skillCharges: readonly SkillChargeSnapshot[],
-) => EffectSnapshot;
+export type VolleyEffectsResolver = () => EffectSnapshot;
 
 /** Structural mirror of the app command's outcome payload for dispatch. */
 export interface GameOutcomeMessageLike {
@@ -53,11 +53,7 @@ export interface GameSessionCallbacks {
    * publishes the fresh checkpoint back through `replaceState`.
    */
   readonly onSkillRequested: (skillId: SkillId) => void;
-  /**
-   * Per-volley effect snapshot provider. The default resolves
-   * `resolveVolleyEffects(NEUTRAL)`; production callers wire the app-owned
-   * catalog, build, and rolled params.
-   */
+  /** Per-volley effect snapshot provider (production: the S02 resolver). */
   readonly resolveVolleyEffects: VolleyEffectsResolver;
 }
 
@@ -90,24 +86,6 @@ export interface GameSession {
 const KEYBOARD_PADDLE_STEP = 4;
 
 /**
- * Extract the room-scoped skill charges a caller published with the current
- * state. The session never invents charges: callers that do not track them
- * publish an empty list and the resolver sees no spent skills.
- */
-const chargeKey = "combatSkillCharges";
-
-function readSkillCharges(state: CombatState): readonly SkillChargeSnapshot[] {
-  const charges = (state as CombatState & { readonly [chargeKey]?: unknown })[
-    chargeKey
-  ];
-  return Array.isArray(charges)
-    ? (charges as readonly SkillChargeSnapshot[])
-    : Object.freeze([]);
-}
-
-export { chargeKey as SKILL_CHARGES_STATE_KEY };
-
-/**
  * The ephemeral combat session: owns the live `CombatState`, drives it with
  * the fixed-step engine, normalizes input into domain commands, and bridges
  * volley ends to the app store exactly once (CA-05) keyed by outcome ID.
@@ -123,8 +101,6 @@ export function createGameSession(
 ): GameSession {
   let current: CombatState = initial;
   let effects: EffectSnapshot = NEUTRAL_EFFECTS;
-  let knownSkillCharges: readonly SkillChargeSnapshot[] =
-    readSkillCharges(initial);
   const dispatchedOutcomes = new Set<string>();
   let engineStop: (() => void) | null = null;
   let stopped = false;
@@ -173,7 +149,7 @@ export function createGameSession(
       if (stopped || current.phase !== "pre_launch" || current.outcome !== null) {
         return;
       }
-      effects = callbacks.resolveVolleyEffects(knownSkillCharges);
+      effects = callbacks.resolveVolleyEffects();
       current = launchBall(current, angle, effects);
       callbacks.onRender(createRenderSnapshot(current));
       ensureEngine();
@@ -204,7 +180,6 @@ export function createGameSession(
       }
       current = state;
       effects = NEUTRAL_EFFECTS;
-      knownSkillCharges = readSkillCharges(state);
       if (state.phase === "live") {
         ensureEngine();
       } else {
