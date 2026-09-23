@@ -546,3 +546,242 @@ test.describe("route drafting", () => {
     expect(afterReload.roomState?.status).toBe("ready");
   });
 });
+
+test.describe("room resolution", () => {
+  async function commitRouteByCardName(
+    appPage: Page,
+    cardName: string,
+  ): Promise<void> {
+    const routeGroup = appPage.getByRole("radiogroup", {
+      name: "Room route choices",
+    });
+    await expect(routeGroup.getByRole("radio")).toHaveCount(4);
+    const card = routeGroup.getByRole("radio", { name: cardName });
+    await card.click();
+    await expect(card).toHaveAttribute("aria-checked", "true");
+    await appPage.getByRole("button", { name: "Enter selected room" }).click();
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.livingRun?.phase;
+      })
+      .toBe("room");
+  }
+
+  async function resolveThroughRewardDraft(appPage: Page): Promise<void> {
+    await appPage
+      .getByRole("button", { name: "Advance to reward draft" })
+      .click();
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.livingRun?.phase;
+      })
+      .toBe("reward");
+  }
+
+  test("recovery journey: commit recovery, resolve, draft, confirm, depth 2 survives reload", async ({
+    appPage,
+  }) => {
+    await startCircuitRogue(appPage);
+    await commitRouteByCardName(appPage, "recovery // Soft Reset");
+
+    // Room screen renders the committed recovery room with its offer.
+    await expect(
+      appPage.getByRole("heading", { name: /Soft Reset \/\/ Recovery/ }),
+    ).toBeVisible();
+    await expect(
+      appPage.getByText("Restore 1 Integrity, never above the run maximum."),
+    ).toBeVisible();
+
+    // Integrity starts at max, so the commit clamps at the maximum.
+    await appPage.getByRole("button", { name: "Commit recovery" }).click();
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.livingRun?.integrityCurrent;
+      })
+      .toBe(3);
+    const committed = requireLivingRun(await readShardbreakState(appPage));
+    expect(committed.integrityCurrent).toBe(3);
+    expect(committed.integrityMax).toBe(3);
+
+    // Resolve into the reward phase: exactly three cards.
+    await resolveThroughRewardDraft(appPage);
+    const rewardGroup = appPage.getByRole("radiogroup", {
+      name: "Three reward cards",
+    });
+    await expect(rewardGroup.getByRole("radio")).toHaveCount(3);
+
+    const resolved = requireLivingRun(await readShardbreakState(appPage));
+    expect(resolved.phase).toBe("reward");
+    expect(resolved.roomState).toBeNull();
+    expect(resolved.rewardState?.cards).toHaveLength(3);
+    expect(resolved.rewardState?.status).toBe("offered");
+
+    // Confirm the first card; the single durable command applies it.
+    const firstCard = rewardGroup.getByRole("radio").first();
+    const firstCardId = await firstCard.getAttribute("aria-label");
+    expect(firstCardId).not.toBeNull();
+    await firstCard.click();
+    await expect(firstCard).toHaveAttribute("aria-checked", "true");
+
+    const confirm = appPage.getByRole("button", { name: "Confirm draft" });
+    await expect(confirm).not.toBeDisabled();
+    await confirm.click();
+
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.livingRun?.phase;
+      })
+      .toBe("route");
+
+    const advanced = requireLivingRun(await readShardbreakState(appPage));
+    expect(advanced.depth).toBe(2);
+    expect(advanced.rewardState).toBeNull();
+    expect(advanced.routeState?.offers).toHaveLength(4);
+    const buildIds = [
+      ...(advanced.build?.activeSkillIds ?? []),
+      ...(advanced.build?.passiveEquipmentIds ?? []),
+    ];
+    expect(buildIds.length).toBe(1);
+
+    await expect(
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
+    ).toBeVisible();
+    await expect(appPage.getByText(/Depth 02 · Circuit Rogue/)).toBeVisible();
+
+    // Reload determinism: the advanced state is returned exactly, and the
+    // route offers for depth 2 never reroll.
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
+    ).toBeVisible();
+
+    const reloaded = requireLivingRun(await readShardbreakState(appPage));
+    expect(reloaded.depth).toBe(2);
+    expect(reloaded.rewardState).toBeNull();
+    expect(reloaded.routeState?.offers).toEqual(advanced.routeState?.offers);
+    expect([
+      ...(reloaded.build?.activeSkillIds ?? []),
+      ...(reloaded.build?.passiveEquipmentIds ?? []),
+    ]).toEqual(buildIds);
+    expect(reloaded.integrityCurrent).toBe(committed.integrityCurrent);
+  });
+
+  test("shop journey proves the visible unaffordable contract and depth advance", async ({
+    appPage,
+  }) => {
+    await startCircuitRogue(appPage);
+    await commitRouteByCardName(appPage, "shop // Patchbay");
+
+    // The finite inventory with names and prices is visible.
+    await expect(
+      appPage.getByRole("heading", { name: /Patchbay \/\/ Shop/ }),
+    ).toBeVisible();
+    await expect(appPage.getByText("Integrity Patch")).toBeVisible();
+    await expect(appPage.getByText("Integrity Overhaul")).toBeVisible();
+    const shop = appPage.locator(".room-shop");
+    await expect(shop.locator(".shop-item__reason")).toHaveCount(2);
+
+    // Fresh runs start at 0 room shards, so every buy is disabled with the
+    // explicit insufficient-currency reason. The helpers never seed a wallet.
+    const buys = shop.getByRole("button", { name: "Buy" });
+    await expect(buys).toHaveCount(2);
+    for (const buy of await buys.all()) {
+      await expect(buy).toBeDisabled();
+    }
+    await expect(shop.getByText("Not enough room shards")).toHaveCount(2);
+
+    // Resolving the shop room still advances to the reward draft.
+    await resolveThroughRewardDraft(appPage);
+    const resolved = requireLivingRun(await readShardbreakState(appPage));
+    expect(resolved.phase).toBe("reward");
+    expect(resolved.roomState).toBeNull();
+    expect(resolved.rewardState?.cards).toHaveLength(3);
+    expect(resolved.runCurrency).toBe(0);
+
+    const rewardGroup = appPage.getByRole("radiogroup", {
+      name: "Three reward cards",
+    });
+    await expect(rewardGroup.getByRole("radio")).toHaveCount(3);
+
+    const firstCard = rewardGroup.getByRole("radio").first();
+    await firstCard.click();
+    await expect(firstCard).toHaveAttribute("aria-checked", "true");
+    await appPage.getByRole("button", { name: "Confirm draft" }).click();
+
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.livingRun?.phase;
+      })
+      .toBe("route");
+    expect(requireLivingRun(await readShardbreakState(appPage)).depth).toBe(2);
+
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: "Pick the next pressure point." }),
+    ).toBeVisible();
+    expect(requireLivingRun(await readShardbreakState(appPage)).depth).toBe(2);
+  });
+
+  test("reward phase records three offered cards and selection nulls them at depth 2", async ({
+    appPage,
+  }) => {
+    await startCircuitRogue(appPage);
+    await commitRouteByCardName(appPage, "recovery // Soft Reset");
+    await resolveThroughRewardDraft(appPage);
+
+    // IndexedDB contract: phase reward with a persisted 3-card offered draft.
+    const offered = requireLivingRun(await readShardbreakState(appPage));
+    expect(offered.phase).toBe("reward");
+    expect(offered.roomState).toBeNull();
+    expect(offered.rewardState?.cards).toHaveLength(3);
+    expect(offered.rewardState?.selectedCardId).toBeNull();
+    expect(offered.rewardState?.status).toBe("offered");
+    const offeredCardIds = offered.rewardState?.cards.map(
+      (card) => card.cardId,
+    );
+    expect(new Set(offeredCardIds).size).toBe(3);
+
+    const rewardGroup = appPage.getByRole("radiogroup", {
+      name: "Three reward cards",
+    });
+    await expect(rewardGroup.getByRole("radio")).toHaveCount(3);
+    await rewardGroup.getByRole("radio").first().click();
+    await appPage.getByRole("button", { name: "Confirm draft" }).click();
+
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.livingRun?.phase;
+      })
+      .toBe("route");
+
+    // IndexedDB contract: applied draft is consumed; depth and route advance.
+    const applied = requireLivingRun(await readShardbreakState(appPage));
+    expect(applied.phase).toBe("route");
+    expect(applied.rewardState).toBeNull();
+    expect(applied.depth).toBe(2);
+    expect(applied.routeState?.offers).toHaveLength(4);
+    expect(applied.routeState?.eventKey).toContain(
+      ":2",
+    );
+
+    // The applied build contains exactly the confirmed draft card's base.
+    const appliedBaseIds = [
+      ...(applied.build?.activeSkillIds ?? []),
+      ...(applied.build?.passiveEquipmentIds ?? []),
+    ];
+    expect(appliedBaseIds).toHaveLength(1);
+    expect(
+      offered.rewardState?.cards
+        .map((card) => card.baseRewardId)
+        .includes(appliedBaseIds[0] ?? ""),
+    ).toBe(true);
+  });
+});

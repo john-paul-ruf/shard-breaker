@@ -128,3 +128,109 @@
     box-shadow: none;
   }
 }
+
+/* Room screen: collapse the stat row and the shop grid below desktop. */
+@media (width <= 1023px) {
+  .room-header__stats {
+    flex-wrap: wrap;
+  }
+
+  .room-shop {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* Reward cards: readable minimum width with horizontal scroll when needed. */
+  .reward-cards {
+    grid-template-columns: repeat(3, minmax(220px, 1fr));
+    overflow-x: auto;
+    padding-bottom: var(--space-4);
+  }
+
+  .reward-card {
+    min-width: 220px;
+  }
+}
+
+@media (width <= 720px) {
+  .room-screen,
+  .reward-screen {
+    width: min(100% - 32px, 560px);
+    padding: var(--space-24) 0 var(--space-32);
+  }
+
+  .room-header__stats {
+    gap: var(--space-8);
+  }
+
+  .room-header__stat {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-8);
+  }
+
+  /* Room shop: single column on phones. */
+  .room-shop {
+    grid-template-columns: 1fr;
+  }
+
+  .shop-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .room-actions {
+    flex-direction: column;
+  }
+
+  .room-actions .action-button {
+    width: 100%;
+  }
+
+  /* Reward draft phone: stacked cards and confirm bar. */
+  .reward-header {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .reward-lock {
+    width: 100%;
+    text-align: left;
+  }
+
+  .reward-cards {
+    grid-template-columns: 1fr;
+    overflow-x: visible;
+  }
+
+  .reward-card {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .reward-draft-bar {
+    align-items: start;
+    flex-direction: column;
+    gap: var(--space-8);
+  }
+
+  .reward-confirm-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .reward-confirm-bar .action-button {
+    width: 100%;
+  }
+}
+
+/* Reduced motion: card hover lifts and selected glow stop; borders, labels,
+   and aria state keep every selection legible. */
+@media (prefers-reduced-motion: reduce) {
+  .reward-card:hover {
+    transform: none;
+  }
+
+  .reward-card--selected {
+    box-shadow: none;
+  }
+}

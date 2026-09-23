@@ -62,6 +62,24 @@ export interface StoredLivingRunRecord {
     readonly boss: unknown | null;
     readonly resolutionCommitId: string | null;
   } | null;
+  readonly rewardState: {
+    readonly eventKey: string;
+    readonly sourceRoomId: string;
+    readonly cards: readonly {
+      readonly cardId: string;
+      readonly baseRewardId: string;
+      readonly rewardType: string;
+      readonly materialCost: number;
+    }[];
+    readonly selectedCardId: string | null;
+    readonly status: string;
+  } | null;
+  readonly runCurrency: number;
+  readonly build: {
+    readonly activeSkillIds: readonly string[];
+    readonly passiveEquipmentIds: readonly string[];
+    readonly carryOverRelicId: string | null;
+  } | null;
 }
 
 export interface StoredLifecycleState {
