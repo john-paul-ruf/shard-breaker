@@ -15,6 +15,7 @@ import type {
   StartRunPersistenceInstruction,
 } from "../persistence/envelopes";
 import { createAppStore } from "./appStore";
+import type { AppStore } from "./appStore";
 
 const catalog = createContentCatalog();
 const CIRCUIT_ROGUE = "class-circuit-rogue" as ContentId;
@@ -29,19 +30,22 @@ function makeProfile(): Profile {
   });
 }
 
-function makeLivingRun(): LivingRun {
-  return createInitialLivingRun(
-    catalog.contentVersion,
-    GLITCH_KNIGHT,
-    4,
-    null,
-    {
-      runId: "run-restored",
-      seed: "seed-restored",
-      now: 1_700_000_000_100,
-      commitId: "commit-start",
-    },
-  );
+function makeLivingRun(overrides: Partial<LivingRun> = {}): LivingRun {
+  return {
+    ...createInitialLivingRun(
+      catalog.contentVersion,
+      GLITCH_KNIGHT,
+      4,
+      null,
+      {
+        runId: "run-restored",
+        seed: "seed-restored",
+        now: 1_700_000_000_100,
+        commitId: "commit-start",
+      },
+    ),
+    ...overrides,
+  };
 }
 
 function success<T>(value: T): PersistenceResult<T> {
@@ -821,5 +825,255 @@ describe("createAppStore route commands", () => {
       tone: "rejected",
       message: "The selected route offer is not part of the current route.",
     });
+  });
+});
+async function storeInRoomPhase(
+  roomType: "battle" | "shop" | "recovery",
+  store: AppStore,
+): Promise<void> {
+  await store.dispatch({ type: "route/materialize" });
+  const offerId = store
+    .getSnapshot()
+    .livingRun!.routeState!.offers.find(
+      (offer) => offer.roomType === roomType,
+    )!.offerId;
+  await store.dispatch({ type: "route/select-offer", offerId });
+  await store.dispatch({ type: "route/commit" });
+}
+
+describe("createAppStore room and reward commands", () => {
+  it("purchases a shop item, deducts currency, and persists via saveCheckpoint", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun({ runCurrency: 999 });
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route", "commit-buy"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("shop", store);
+
+    const before = store.getSnapshot().livingRun!;
+    const item = before.roomState!.shop!.inventory[0]!;
+    const currencyBefore = before.runCurrency;
+
+    await store.dispatch({ type: "room/buy-shop-item", itemId: item.itemId });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun!.roomState!.shop!.purchasedItemIds).toEqual([item.itemId]);
+    expect(snapshot.livingRun!.runCurrency).toBe(currencyBefore - item.price);
+    expect(snapshot.livingRun!.roomState!.status).toBe("in_progress");
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Purchase saved.",
+    });
+    expect(vi.mocked(repository.saveCheckpoint).mock.calls.at(-1)?.[0]).toMatchObject({
+      kind: "save-checkpoint",
+      runId: livingRun.runId,
+      proposedRun: { runCurrency: currencyBefore - item.price },
+    });
+  });
+
+  it("commits recovery, restoring integrity clamped to the maximum", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route", "commit-recovery"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("recovery", store);
+
+    await store.dispatch({ type: "room/commit-recovery" });
+
+    const snapshot = store.getSnapshot();
+    const run = snapshot.livingRun!;
+    expect(run.roomState!.recovery!.committed).toBe(true);
+    expect(run.roomState!.recovery!.commitId).not.toBeNull();
+    expect(run.integrityCurrent).toBe(Math.min(run.integrityCurrent, run.integrityMax));
+    expect(run.roomState!.status).toBe("in_progress");
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Recovery committed.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(4);
+  });
+
+  it("resolves a utility room into the reward phase with a three-card draft", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route", "commit-resolve"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("recovery", store);
+
+    await store.dispatch({ type: "room/resolve" });
+
+    const snapshot = store.getSnapshot();
+    const run = snapshot.livingRun!;
+    expect(run.phase).toBe("reward");
+    expect(run.roomState).toBeNull();
+    expect(run.rewardState!.cards).toHaveLength(3);
+    expect(new Set(run.rewardState!.cards.map((card) => card.cardId)).size).toBe(3);
+    expect(run.progress.roomsResolved).toBe(1);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Room resolved. Reward draft saved.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(4);
+  });
+
+  it("selects a reward and lands on a materialized route for the next depth", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-resolve",
+        "commit-reward",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("recovery", store);
+    await store.dispatch({ type: "room/resolve" });
+    const cardId = store.getSnapshot().livingRun!.rewardState!.cards[0]!.cardId;
+
+    await store.dispatch({ type: "reward/select", cardId });
+
+    const snapshot = store.getSnapshot();
+    const run = snapshot.livingRun!;
+    expect(run.phase).toBe("route");
+    expect(run.rewardState).toBeNull();
+    expect(run.depth).toBe(livingRun.depth + 1);
+    expect(run.routeState!.offers.length).toBeGreaterThan(0);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: `Reward selected. Advancing to Depth ${String(run.depth)}.`,
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(5);
+  });
+
+  it("names the displaced reward in the save signal when a full side is replaced", async () => {
+    // The slots-aware generator emits only equipment cards when the skill side
+    // is full, so the replacement proof fills both sides and selects from the
+    // all-equipment draft (same reducer replacement path, deterministic seed).
+    const profile = makeProfile();
+    const livingRun = makeLivingRun({
+      build: {
+        activeSkillIds: [
+          "skill-phase-shunt" as ContentId,
+          "skill-prism-burst" as ContentId,
+          "skill-rebound-lens" as ContentId,
+        ],
+        passiveEquipmentIds: [
+          "equipment-fractal-core" as ContentId,
+          "equipment-arc-coil" as ContentId,
+          "equipment-soft-patch" as ContentId,
+          "equipment-static-ward" as ContentId,
+        ],
+        carryOverRelicId: null,
+      },
+    });
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-resolve",
+        "commit-reward",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("recovery", store);
+    await store.dispatch({ type: "room/resolve" });
+
+    const reward = store.getSnapshot().livingRun!.rewardState!;
+    expect(reward.cards.every((card) => card.rewardType === "equipment")).toBe(true);
+    const held = new Set(store.getSnapshot().livingRun!.build.passiveEquipmentIds);
+    const equipmentCard = reward.cards.find((card) => !held.has(card.baseRewardId))!;
+
+    await store.dispatch({ type: "reward/select", cardId: equipmentCard.cardId });
+
+    const snapshot = store.getSnapshot();
+
+    const build = snapshot.livingRun!.build;
+    expect(build.activeSkillIds).toEqual([
+      "skill-phase-shunt",
+      "skill-prism-burst",
+      "skill-rebound-lens",
+    ]);
+    expect(build.passiveEquipmentIds).toHaveLength(4);
+    expect(build.passiveEquipmentIds).not.toContain("equipment-fractal-core");
+    expect(build.passiveEquipmentIds).toContain(equipmentCard.baseRewardId);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message:
+        "Reward selected; replaced Fractal Core. Advancing to Depth 2.",
+    });
+  });
+
+  it("rejects resolving a battle room with the bounded combat message", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route", "commit-resolve"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+
+    await store.dispatch({ type: "room/resolve" });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun!.phase).toBe("room");
+    expect(snapshot.livingRun!.roomState!.status).toBe("ready");
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "rejected",
+      message:
+        "The combat engine is not available yet, so this room cannot be resolved.",
+    });
+  });
+
+  it("rejects a second reward selection after the draft was consumed", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-resolve",
+        "commit-reward",
+        "commit-reward-2",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("recovery", store);
+    await store.dispatch({ type: "room/resolve" });
+    const cardId = store.getSnapshot().livingRun!.rewardState!.cards[0]!.cardId;
+    await store.dispatch({ type: "reward/select", cardId });
+
+    await store.dispatch({ type: "reward/select", cardId });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun!.phase).toBe("route");
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "rejected",
+      message: "The current archive state is invalid. No saved data was changed.",
+    });
+    expect(repository.saveCheckpoint).toHaveBeenCalledTimes(5);
   });
 });

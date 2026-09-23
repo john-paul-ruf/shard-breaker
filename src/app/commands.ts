@@ -16,4 +16,8 @@ export type AppCommand =
   | { readonly type: "run/return-to-archive" }
   | { readonly type: "route/materialize" }
   | { readonly type: "route/select-offer"; readonly offerId: string }
-  | { readonly type: "route/commit" };
+  | { readonly type: "route/commit" }
+  | { readonly type: "room/buy-shop-item"; readonly itemId: ContentId }
+  | { readonly type: "room/commit-recovery" }
+  | { readonly type: "room/resolve" }
+  | { readonly type: "reward/select"; readonly cardId: string };

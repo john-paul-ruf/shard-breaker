@@ -147,7 +147,11 @@ function isDurableCommand(command: AppCommand): boolean {
     command.type === "run/confirm-abandon-and-start" ||
     command.type === "route/materialize" ||
     command.type === "route/select-offer" ||
-    command.type === "route/commit"
+    command.type === "route/commit" ||
+    command.type === "room/buy-shop-item" ||
+    command.type === "room/commit-recovery" ||
+    command.type === "room/resolve" ||
+    command.type === "reward/select"
   );
 }
 
@@ -597,6 +601,286 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
     }
   }
 
+  async function handleBuyShopItem(itemId: ContentId): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "BuyShopItem",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          itemId,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The purchase could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `The purchase was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: { tone: "saved", message: "Purchase saved." },
+      });
+    } catch {
+      rejectCommand(
+        "The purchase could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  async function handleCommitRecovery(): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "CommitRecovery",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The recovery commit could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `Recovery was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: { tone: "saved", message: "Recovery committed." },
+      });
+    } catch {
+      rejectCommand(
+        "Recovery could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  async function handleResolveRoom(): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "ResolveRoom",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The room resolution could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `The room resolution was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: {
+          tone: "saved",
+          message: "Room resolved. Reward draft saved.",
+        },
+      });
+    } catch {
+      rejectCommand(
+        "The room resolution could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  async function handleSelectReward(cardId: string): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null || runState.livingRun === null) {
+      rejectCommand("No living run is available for that action.");
+      return;
+    }
+    const livingRun = runState.livingRun;
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "SelectReward",
+          runId: livingRun.runId,
+          expectedRevision: livingRun.revision,
+          cardId,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "save-checkpoint" ||
+        transition.state.livingRun === null
+      ) {
+        rejectCommand("The reward selection could not be prepared safely.");
+        return;
+      }
+
+      const before = livingRun.build;
+      const after = transition.state.livingRun.build;
+      // On a full side the only durable transition is replace-earliest, so the
+      // head changing while the length stays at the cap means a displacement.
+      const displacedActive =
+        before.activeSkillIds.length === 3 &&
+        after.activeSkillIds.length === 3 &&
+        after.activeSkillIds[0] !== before.activeSkillIds[0]
+          ? (before.activeSkillIds[0] ?? null)
+          : null;
+      const displacedPassive =
+        before.passiveEquipmentIds.length === 4 &&
+        after.passiveEquipmentIds.length === 4 &&
+        after.passiveEquipmentIds[0] !== before.passiveEquipmentIds[0]
+          ? (before.passiveEquipmentIds[0] ?? null)
+          : null;
+      const displacedId = displacedActive ?? displacedPassive;
+      let displacedName: string | null = null;
+      if (displacedId !== null) {
+        const skillResult = dependencies.catalog.getSkill(displacedId);
+        const equipmentResult = dependencies.catalog.getEquipment(displacedId);
+        displacedName = skillResult.ok
+          ? skillResult.value.displayName
+          : equipmentResult.ok
+            ? equipmentResult.value.displayName
+            : null;
+      }
+      const newDepth = transition.state.livingRun.depth;
+
+      const committed = await dependencies.repository.saveCheckpoint({
+        ...transition.persistence,
+        proposedRun: transition.state.livingRun,
+      });
+      if (!committed.ok) {
+        rejectCommand(
+          `The reward selection was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun === null) {
+        rejectCommand("The living run was not present after the save completed.");
+        return;
+      }
+
+      publish({
+        livingRun: committed.value.livingRun,
+        isBusy: false,
+        saveSignal: {
+          tone: "saved",
+          message:
+            displacedId === null
+              ? `Reward selected. Advancing to Depth ${String(newDepth)}.`
+              : `Reward selected; replaced ${displacedName ?? "an earlier reward"}. Advancing to Depth ${String(newDepth)}.`,
+        },
+      });
+    } catch {
+      rejectCommand(
+        "The reward selection could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
   async function handleConfirmAbandonAndStart(): Promise<void> {
     const beforeAbandon = currentRunState();
     const selectedClassId = state.selectedClassId;
@@ -781,6 +1065,18 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
         return;
       case "route/commit":
         await handleCommitRoute();
+        return;
+      case "room/buy-shop-item":
+        await handleBuyShopItem(command.itemId);
+        return;
+      case "room/commit-recovery":
+        await handleCommitRecovery();
+        return;
+      case "room/resolve":
+        await handleResolveRoom();
+        return;
+      case "reward/select":
+        await handleSelectReward(command.cardId);
         return;
     }
     assertNever(command);
