@@ -7,6 +7,7 @@ import type { ClassDefinition } from "./classes";
 import { CLASS_DEFINITIONS } from "./classes";
 import type { EnhancementDefinition } from "./enhancements";
 import { ENHANCEMENT_DEFINITIONS } from "./enhancements";
+import { ENEMY_DEFINITIONS } from "./enemies";
 import type { EquipmentDefinition } from "./equipment";
 import { EQUIPMENT_DEFINITIONS } from "./equipment";
 import {
@@ -96,6 +97,7 @@ describe("content catalog", () => {
       ...SKILL_DEFINITIONS,
       ...EQUIPMENT_DEFINITIONS,
       ...ENHANCEMENT_DEFINITIONS,
+      ...ENEMY_DEFINITIONS,
     ];
     const ids = definitions.map((definition) => definition.id);
 
@@ -269,5 +271,26 @@ describe("reward content", () => {
         ENHANCEMENT_DEFINITIONS[0]!,
       );
     }).toThrow();
+  });
+});
+
+describe("enemy content facade", () => {
+  it("enumerates six enemies and totally looks them up", () => {
+    const catalog = createContentCatalog();
+    expect(catalog.listEnemies()).toHaveLength(6);
+    expect(catalog.getEnemy(asContentId("enemy-sprite-prism"))).toMatchObject({
+      ok: true,
+      value: { displayName: "Prism", baseHealth: 3, behavior: "static" },
+    });
+    expect(catalog.getEnemy(asContentId("enemy-sprite-regen"))).toMatchObject({
+      ok: true,
+      value: { displayName: "Mender", behavior: "regenerating" },
+    });
+    expect(catalog.getEnemy(asContentId("enemy-unknown"))).toEqual({
+      ok: false,
+      code: "unknown-content-id",
+      contentId: "enemy-unknown",
+    });
+    expect(Object.isFrozen(catalog.listEnemies())).toBe(true);
   });
 });

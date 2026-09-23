@@ -4,6 +4,8 @@ import type { ClassDefinition } from "./classes";
 import { CLASS_DEFINITIONS } from "./classes";
 import type { EnhancementDefinition } from "./enhancements";
 import { ENHANCEMENT_DEFINITIONS } from "./enhancements";
+import type { EnemyDefinition } from "./enemies";
+import { ENEMY_DEFINITIONS } from "./enemies";
 import type { EquipmentDefinition } from "./equipment";
 import { EQUIPMENT_DEFINITIONS } from "./equipment";
 import type {
@@ -77,6 +79,8 @@ export interface ContentCatalog {
   getEquipment(id: ContentId): ContentLookupResult<EquipmentDefinition>;
   listEnhancements(): readonly EnhancementDefinition[];
   getEnhancement(id: ContentId): ContentLookupResult<EnhancementDefinition>;
+  listEnemies(): readonly EnemyDefinition[];
+  getEnemy(id: ContentId): ContentLookupResult<EnemyDefinition>;
   hasContent(id: ContentId): boolean;
 }
 
@@ -217,6 +221,25 @@ export function createContentCatalog(): ContentCatalog {
     enhancementsById.set(definition.id, definition);
   }
 
+  const enemiesById = new Map<ContentId, EnemyDefinition>();
+  for (const definition of ENEMY_DEFINITIONS) {
+    registerKnownId(knownContentIds, definition.id, "enemies");
+    if (
+      definition.glyph.trim().length === 0 ||
+      (definition.behavior === "static" && definition.behaviorParam !== 0) ||
+      (definition.behavior === "splintering" && definition.behaviorParam !== 0) ||
+      (definition.behavior === "regenerating" &&
+        (!Number.isSafeInteger(definition.behaviorParam) ||
+          definition.behaviorParam < 1)) ||
+      (definition.behavior === "phasing" &&
+        (!Number.isSafeInteger(definition.behaviorParam) ||
+          definition.behaviorParam < 1))
+    ) {
+      throw new Error(`invalid enemy definition: ${definition.id}`);
+    }
+    enemiesById.set(definition.id, definition);
+  }
+
   if (RECOVERY_RESTORE_AMOUNT !== 1) {
     throw new Error("recovery must restore exactly 1 Integrity");
   }
@@ -228,6 +251,7 @@ export function createContentCatalog(): ContentCatalog {
   const skills = Object.freeze([...SKILL_DEFINITIONS]);
   const equipment = Object.freeze([...EQUIPMENT_DEFINITIONS]);
   const enhancements = Object.freeze([...ENHANCEMENT_DEFINITIONS]);
+  const enemies = Object.freeze([...ENEMY_DEFINITIONS]);
   const initialClassUnlockIds = Object.freeze(
     classes
       .filter((definition) => definition.availability === "initial")
@@ -257,6 +281,8 @@ export function createContentCatalog(): ContentCatalog {
     getEquipment: (id) => lookup(equipmentById, id),
     listEnhancements: () => enhancements,
     getEnhancement: (id) => lookup(enhancementsById, id),
+    listEnemies: () => enemies,
+    getEnemy: (id) => lookup(enemiesById, id),
     hasContent: (id) => knownContentIds.has(id),
   };
   return Object.freeze(catalog);
