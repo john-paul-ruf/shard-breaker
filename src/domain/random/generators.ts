@@ -1,3 +1,4 @@
+import { createCombatState, toCombatCheckpoint } from "../combat/layout";
 import type {
   ContentCatalog,
   ContentId,
@@ -5,7 +6,7 @@ import type {
 } from "../content/catalog";
 import type { EnhancementDefinition } from "../content/enhancements";
 import type { EquipmentDefinition } from "../content/equipment";
-import type { EffectParam } from "../run/model";
+import type { CombatCheckpoint, EffectParam } from "../run/model";
 import type { RoomDefinition, RoomType } from "../content/rooms";
 import { RECOVERY_RESTORE_AMOUNT } from "../content/rooms";
 import type { SkillDefinition } from "../content/skills";
@@ -121,7 +122,7 @@ export interface GeneratedRoomCandidate {
   readonly counterplay: string;
   readonly objectiveIds: readonly ContentId[];
   readonly threatProfile: GeneratedThreatProfile;
-  readonly combatCheckpoint: null;
+  readonly combatCheckpoint: CombatCheckpoint | null;
   readonly processedOutcomeIds: readonly string[];
   readonly shop: GeneratedShopState | null;
   readonly recovery: GeneratedRecoveryState | null;
@@ -540,7 +541,21 @@ export function generateRoomCandidate(
     counterplay: room.counterplay,
     objectiveIds: Object.freeze([...room.objectiveIds]),
     threatProfile,
-    combatCheckpoint: null,
+    combatCheckpoint: room.roomType === "battle" || room.roomType === "elite" || room.roomType === "boss"
+      ? toCombatCheckpoint(
+          createCombatState(catalog, {
+            seed: context.seed,
+            contentVersion: context.contentVersion,
+            roomId: `${offer.roomEventKey}:candidate`,
+            eventKey: offer.roomEventKey,
+            formationId: threatProfile.formationId,
+            density: threatProfile.density,
+            durabilityFactor: threatProfile.durabilityFactor,
+            lossCount: 0,
+            hazardIds: threatProfile.hazardIds,
+          }),
+        )
+      : null,
     processedOutcomeIds: Object.freeze([]),
     shop:
       shopInventory === null
