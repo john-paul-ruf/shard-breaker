@@ -1,5 +1,5 @@
-import type { BossRoutingIdentity } from "./bosses";
-import { BOSS_ROUTING_IDENTITIES } from "./bosses";
+import type { BossDefinition } from "./bosses";
+import { BOSS_DEFINITIONS } from "./bosses";
 import type { ClassDefinition } from "./classes";
 import { CLASS_DEFINITIONS } from "./classes";
 import type { EnhancementDefinition } from "./enhancements";
@@ -71,8 +71,8 @@ export interface ContentCatalog {
   getRoom(id: ContentId): ContentLookupResult<RoomDefinition>;
   listShopServices(): readonly ShopServiceDefinition[];
   getShopService(id: ContentId): ContentLookupResult<ShopServiceDefinition>;
-  listBosses(): readonly BossRoutingIdentity[];
-  getBoss(id: ContentId): ContentLookupResult<BossRoutingIdentity>;
+  listBosses(): readonly BossDefinition[];
+  getBoss(id: ContentId): ContentLookupResult<BossDefinition>;
   listSkills(): readonly SkillDefinition[];
   getSkill(id: ContentId): ContentLookupResult<SkillDefinition>;
   listEquipment(): readonly EquipmentDefinition[];
@@ -184,8 +184,12 @@ export function createContentCatalog(): ContentCatalog {
     shopServicesById.set(definition.id, definition);
   }
 
-  const bossesById = new Map<ContentId, BossRoutingIdentity>();
-  for (const definition of BOSS_ROUTING_IDENTITIES) {
+  // Bosses register from the full authored definitions: the routing identity
+  // fields ride along (BossDefinition extends BossRoutingIdentity), so
+  // `listBosses` keeps its CA-09 routing compatibility while `getBoss`
+  // resolves the full combat anatomy.
+  const bossesById = new Map<ContentId, BossDefinition>();
+  for (const definition of BOSS_DEFINITIONS) {
     registerKnownId(knownContentIds, definition.id, "bosses");
     bossesById.set(definition.id, definition);
   }
@@ -247,7 +251,7 @@ export function createContentCatalog(): ContentCatalog {
   const classes = Object.freeze([...CLASS_DEFINITIONS]);
   const rooms = Object.freeze([...ROOM_DEFINITIONS]);
   const shopServices = Object.freeze([...SHOP_SERVICE_DEFINITIONS]);
-  const bosses = Object.freeze([...BOSS_ROUTING_IDENTITIES]);
+  const bosses = Object.freeze([...BOSS_DEFINITIONS]);
   const skills = Object.freeze([...SKILL_DEFINITIONS]);
   const equipment = Object.freeze([...EQUIPMENT_DEFINITIONS]);
   const enhancements = Object.freeze([...ENHANCEMENT_DEFINITIONS]);

@@ -141,6 +141,45 @@ describe("content catalog", () => {
   });
 });
 
+describe("boss catalog rows", () => {
+  it("keeps listBosses entries routing-identity compatible for CA-09 consumers", () => {
+    const catalog = createContentCatalog();
+    const bosses = catalog.listBosses();
+    expect(bosses).toHaveLength(4);
+    for (const boss of bosses) {
+      expect(boss.id.startsWith("boss-")).toBe(true);
+      expect(boss.displayName.trim()).not.toBe("");
+      expect(boss.identityLabel.trim()).not.toBe("");
+      expect(catalog.hasContent(boss.id)).toBe(true);
+    }
+    expect(Object.isFrozen(bosses)).toBe(true);
+  });
+
+  it("resolves the full BossDefinition through getBoss for every archetype", () => {
+    const catalog = createContentCatalog();
+    for (const boss of BOSS_ROUTING_IDENTITIES) {
+      const result = catalog.getBoss(boss.id);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.displayName).toBe(boss.displayName);
+        expect(result.value.identityLabel).toBe(boss.identityLabel);
+        expect(result.value.phases).toHaveLength(3);
+        expect(result.value.telegraphs.length).toBeGreaterThanOrEqual(2);
+        expect(result.value.compatibleModifiers.length).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it("keeps the unknown-boss lookup rejection typed", () => {
+    const catalog = createContentCatalog();
+    expect(catalog.getBoss(asContentId("boss-unknown"))).toEqual({
+      ok: false,
+      code: "unknown-content-id",
+      contentId: "boss-unknown",
+    });
+  });
+});
+
 describe("reward content", () => {
   it("authors eight skills, eight equipment items, and fourteen enhancements", () => {
     expect(SKILL_DEFINITIONS).toHaveLength(8);
