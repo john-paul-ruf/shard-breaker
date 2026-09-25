@@ -22,12 +22,14 @@ import type {
   CombatCheckpoint,
   EffectParam,
   LivingRun,
+  Profile,
   RewardCardSnapshot,
   RewardState,
   RouteOfferSnapshot,
   RoomState,
   RouteState,
   RunState,
+  RunSummarySnapshot,
   ThreatProfileSnapshot,
 } from "./model";
 import { createInitialLivingRun } from "./model";
@@ -617,6 +619,63 @@ export function battleCurrencyGrant(
 }
 
 /**
+ * The terminal loss transition (CA-14): the zero-integrity run is removed,
+ * the profile records the death via the committed floor-entry rule
+ * (`highestReachedDepth` becomes `max(current, depth)`), and the
+ * persistence instruction carries the summary so the repository finalizes
+ * profile and living-run in one transaction. Mirrors `abandonRun`'s
+ * state shape with the record/summary/lastFinalizedRunId updates applied.
+ */
+function deathTransition(
+  state: RunState,
+  finalizedRun: LivingRun,
+  command: Extract<RunCommand, { type: "ReportCombatOutcome" }>,
+): RunTransition {
+  const summary: RunSummarySnapshot = Object.freeze({
+    runId: finalizedRun.runId,
+    classId: finalizedRun.classId,
+    reachedDepth: finalizedRun.depth,
+    bossesReached: finalizedRun.progress.bossesReached,
+    bossesDefeated: finalizedRun.progress.bossesDefeated,
+    activeSkillIds: Object.freeze([...finalizedRun.build.activeSkillIds]),
+    passiveEquipmentIds: Object.freeze([...finalizedRun.build.passiveEquipmentIds]),
+    carryOverRelicId: finalizedRun.build.carryOverRelicId,
+    shardsEarned: 0,
+    terminalReason: "death",
+    completedAt: command.now,
+  });
+  const profile: Profile = {
+    ...state.profile,
+    records: {
+      ...state.profile.records,
+      highestReachedDepth: Math.max(
+        state.profile.records.highestReachedDepth,
+        finalizedRun.depth,
+      ),
+    },
+    lastRunSummary: summary,
+    lastFinalizedRunId: finalizedRun.runId,
+    revision: state.profile.revision + 1,
+    updatedAt: command.now,
+    lastCommitId: command.commitId,
+  };
+  return {
+    ok: true,
+    state: { profile, livingRun: null },
+    persistence: {
+      kind: "finalize-death",
+      runId: finalizedRun.runId,
+      commitId: command.commitId,
+      // The revision the durable record still carries: the repository
+      // compares the instruction against the stored run, exactly like the
+      // other instructions (which also name the pre-transition revision).
+      expectedRevision: state.livingRun?.revision ?? finalizedRun.revision,
+      summary,
+    },
+  };
+}
+
+/**
  * Launch the ball in this room's combat arena. The command validates the aim
  * against S01's legal cone and mirrors the room-entry checkpoint through
  * `fromCombatCheckpoint` (which fails closed on stale or foreign layouts),
@@ -935,16 +994,32 @@ function reportCombatOutcome(
     };
   } else {
     // CA-04: a loss costs exactly one Integrity and restores a valid
-    // pre-launch checkpoint. Reaching 0 is the death boundary owned by
-    // CAP-12 (S07): until finalization lands, a loss at 1 commits with
-    // integrity 0 and the room still open in pre-launch; a further loss at
-    // 0 is rejected — no fabricated survival.
+    // pre-launch checkpoint. Reaching 0 is the death boundary (CA-14): the
+    // run finalizes with a terminal summary and no living run instead of
+    // committing a zero-integrity checkpoint; a further loss at 0 stays
+    // rejected — no fabricated survival.
     const integrityCurrent = run.integrityCurrent - 1;
     if (integrityCurrent < 0) {
       return reject(state, {
         code: "invalid-state",
         issues: ["integrity is already depleted"],
       });
+    }
+    if (integrityCurrent === 0) {
+      const terminalRoom: RoomState = Object.freeze({
+        ...room,
+        status: "in_progress",
+        processedOutcomeIds: recordedOutcomeIds,
+      });
+      const terminalRun: LivingRun = {
+        ...run,
+        roomState: terminalRoom,
+        integrityCurrent,
+        revision: run.revision + 1,
+        updatedAt: command.now,
+        lastCommitId: command.commitId,
+      };
+      return deathTransition(state, terminalRun, command);
     }
     const restoredState = { ...rebuilt, losses: context.lossCount + 1 };
     const restoredCheckpoint: CombatCheckpoint = toCombatCheckpoint(

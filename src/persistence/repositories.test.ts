@@ -12,6 +12,7 @@ import { runReducer } from "../domain/run/reducer";
 import { openDatabase } from "./database";
 import type {
   AbandonRunPersistenceInstruction,
+  FinalizeDeathPersistenceInstruction,
   RunLifecycleRepository,
   SaveCheckpointPersistenceInstruction,
   ShardbreakDatabase,
@@ -836,6 +837,293 @@ describe("atomic save-checkpoint", () => {
       expect(await testDatabase.database.get("livingRun", "current")).toEqual(storedBefore);
     } finally {
       await closeAndDelete(testDatabase);
+    }
+  });
+});
+
+/**
+ * Drive a started run into a committed battle room at integrity 1, persisting
+ * every checkpoint through the real repository so the stored record and the
+ * terminal instruction advance in lockstep.
+ */
+async function startBattleRoomAtOneIntegrity(
+  repository: RunLifecycleRepository,
+  profile: Profile,
+): Promise<RunState> {
+  const started = await repository.startRun(startInstruction(profile));
+  if (!started.ok || started.value.livingRun === null) {
+    throw new Error("start must succeed");
+  }
+  let state: RunState = started.value;
+
+  async function drive(
+    command: Extract<RunCommand, { readonly type: "MaterializeRoute" | "SelectRouteOffer" | "CommitRoute" | "ReportCombatOutcome" }>,
+  ): Promise<void> {
+    const transition = runReducer(state, command, catalog);
+    if (
+      !transition.ok ||
+      transition.state.livingRun === null ||
+      transition.persistence.kind !== "save-checkpoint"
+    ) {
+      throw new Error(`drive command failed: ${command.type}`);
+    }
+    const committed = await repository.saveCheckpoint({
+      ...transition.persistence,
+      proposedRun: transition.state.livingRun,
+    });
+    if (!committed.ok || committed.value.livingRun === null) {
+      throw new Error(`drive checkpoint failed: ${command.type}`);
+    }
+    state = committed.value;
+  }
+
+  const livingRun = state.livingRun!;
+  await drive({
+    type: "MaterializeRoute",
+    runId: livingRun.runId,
+    expectedRevision: livingRun.revision,
+    commitId: "commit-materialize",
+    now: profileMetadata.now + 2,
+  });
+  const battleOffer = state.livingRun!.routeState!.offers.find(
+    (offer) => offer.roomType === "battle",
+  )!;
+  await drive({
+    type: "SelectRouteOffer",
+    runId: livingRun.runId,
+    expectedRevision: state.livingRun!.revision,
+    offerId: battleOffer.offerId,
+    commitId: "commit-select",
+    now: profileMetadata.now + 3,
+  });
+  await drive({
+    type: "CommitRoute",
+    runId: livingRun.runId,
+    expectedRevision: state.livingRun!.revision,
+    commitId: "commit-route",
+    now: profileMetadata.now + 4,
+  });
+
+  // Three committed losses bring Glitch Knight from 4 to 1 Integrity; the
+  // caller's final loss (index 3) crosses the death boundary.
+  const roomEventKey = state.livingRun!.roomState!.eventKey;
+  for (let index = 0; index < 3; index += 1) {
+    await drive({
+      type: "ReportCombatOutcome",
+      runId: livingRun.runId,
+      expectedRevision: state.livingRun!.revision,
+      outcome: {
+        outcomeId: `${roomEventKey}:outcome:loss_of_ball:${String(index)}`,
+        kind: "loss_of_ball",
+      },
+      commitId: `commit-loss-${String(index)}`,
+      now: profileMetadata.now + 5 + index,
+    });
+  }
+  return state;
+}
+
+/** The final zero-integrity loss for a room-phase run, through the reducer. */
+function finalizeInstructionFor(
+  state: RunState,
+  overrides: Partial<FinalizeDeathPersistenceInstruction> = {},
+): FinalizeDeathPersistenceInstruction {
+  const room = state.livingRun!.roomState!;
+  const transition = runReducer(
+    state,
+    {
+      type: "ReportCombatOutcome",
+      runId: state.livingRun!.runId,
+      expectedRevision: state.livingRun!.revision,
+      outcome: {
+        outcomeId: `${room.eventKey}:outcome:loss_of_ball:3`,
+        kind: "loss_of_ball",
+      },
+      commitId: "commit-finalize",
+      now: profileMetadata.now + 6,
+    },
+    catalog,
+  );
+  if (!transition.ok || transition.persistence.kind !== "finalize-death") {
+    throw new Error("the 1-integrity loss must produce a finalize-death transition");
+  }
+  return { ...transition.persistence, ...overrides };
+}
+
+describe("atomic finalize-death", () => {
+  it("deletes the living run and records the summary in one transaction", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const roomState = await startBattleRoomAtOneIntegrity(repository, profile);
+      const runBefore = roomState.livingRun!;
+
+      const instruction = finalizeInstructionFor(roomState);
+      const finalized = await repository.finalizeDeath!(instruction);
+
+      expect(finalized.ok).toBe(true);
+      if (finalized.ok) {
+        expect(finalized.value.livingRun).toBeNull();
+        expect(finalized.value.profile.lastRunSummary).toMatchObject({
+          runId: runBefore.runId,
+          classId: "class-glitch-knight",
+          reachedDepth: runBefore.depth,
+          shardsEarned: 0,
+          terminalReason: "death",
+          completedAt: profileMetadata.now + 6,
+        });
+        expect(finalized.value.profile.lastFinalizedRunId).toBe(runBefore.runId);
+        expect(finalized.value.profile.records.highestReachedDepth).toBe(
+          Math.max(profile.records.highestReachedDepth, runBefore.depth),
+        );
+        expect(finalized.value.profile.revision).toBe(profile.revision + 1);
+      }
+      expect(await testDatabase.database.get("livingRun", "current")).toBeUndefined();
+      const storedProfile = await testDatabase.database.get("profile", "current");
+      expect(storedProfile?.lastRunSummary).toMatchObject({
+        runId: runBefore.runId,
+        terminalReason: "death",
+      });
+      expect(storedProfile?.lastFinalizedRunId).toBe(runBefore.runId);
+      expect(storedProfile?.records.highestReachedDepth).toBe(runBefore.depth);
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("rejects a retry with no living run and preserves the recorded summary", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const roomState = await startBattleRoomAtOneIntegrity(repository, profile);
+      const instruction = finalizeInstructionFor(roomState);
+      expect((await repository.finalizeDeath!(instruction)).ok).toBe(true);
+      const profileAfterFirst = await testDatabase.database.get("profile", "current");
+
+      const retry = await repository.finalizeDeath!(instruction);
+
+      expect(retry).toMatchObject({
+        ok: false,
+        error: { code: "living-run-missing" },
+      });
+      expect(await testDatabase.database.get("profile", "current")).toEqual(profileAfterFirst);
+      expect(await testDatabase.database.get("livingRun", "current")).toBeUndefined();
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("rejects a mismatched retry identity without touching the terminal record", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const roomState = await startBattleRoomAtOneIntegrity(repository, profile);
+      const instruction = finalizeInstructionFor(roomState);
+      expect((await repository.finalizeDeath!(instruction)).ok).toBe(true);
+      const profileAfterFirst = await testDatabase.database.get("profile", "current");
+
+      const foreignRetry = await repository.finalizeDeath!({
+        ...instruction,
+        runId: "run-other",
+      });
+
+      expect(foreignRetry).toMatchObject({
+        ok: false,
+        error: { code: "invalid-living-run" },
+      });
+      expect(await testDatabase.database.get("profile", "current")).toEqual(profileAfterFirst);
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("rejects a stale revision before the terminal write", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const roomState = await startBattleRoomAtOneIntegrity(repository, profile);
+      const runBefore = roomState.livingRun!;
+      const instruction = finalizeInstructionFor(roomState, {
+        expectedRevision: runBefore.revision + 9,
+      });
+
+      const result = await repository.finalizeDeath!(instruction);
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "stale-run-revision" },
+      });
+      expect(await testDatabase.database.get("livingRun", "current")).toBeDefined();
+      const storedProfile = await testDatabase.database.get("profile", "current");
+      expect(storedProfile?.lastRunSummary).toBeNull();
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("rejects a summary that does not describe the dying run", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const profile = await bootstrap(repository);
+      const roomState = await startBattleRoomAtOneIntegrity(repository, profile);
+      const instruction = finalizeInstructionFor(roomState);
+      const mutated: FinalizeDeathPersistenceInstruction = {
+        ...instruction,
+        summary: {
+          ...instruction.summary,
+          reachedDepth: 9,
+        },
+      };
+
+      const result = await repository.finalizeDeath!(mutated);
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "invalid-living-run" },
+      });
+      expect(await testDatabase.database.get("livingRun", "current")).toBeDefined();
+      expect(
+        (await testDatabase.database.get("profile", "current"))?.lastRunSummary,
+      ).toBeNull();
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("keeps the finalized terminal state consistent after the database reopens", async () => {
+    const testDatabase = await openTestDatabase();
+    const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+    const profile = await bootstrap(repository);
+    const roomState = await startBattleRoomAtOneIntegrity(repository, profile);
+    const instruction = finalizeInstructionFor(roomState);
+    expect((await repository.finalizeDeath!(instruction)).ok).toBe(true);
+    testDatabase.database.close();
+
+    const reopened = await openDatabase({
+      name: testDatabase.name,
+      indexedDB: testDatabase.factory,
+    });
+    expect(reopened.ok).toBe(true);
+    if (!reopened.ok) {
+      await deleteDatabase(testDatabase.factory, testDatabase.name);
+      throw new Error(reopened.error.message);
+    }
+    try {
+      const loaded = await createRunLifecycleRepository(reopened.value, catalog).loadState();
+      expect(loaded.ok).toBe(true);
+      if (loaded.ok) {
+        expect(loaded.value.livingRun).toBeNull();
+        expect(loaded.value.profile.lastRunSummary?.terminalReason).toBe("death");
+        expect(loaded.value.profile.lastFinalizedRunId).not.toBeNull();
+      }
+    } finally {
+      reopened.value.close();
+      await deleteDatabase(testDatabase.factory, testDatabase.name);
     }
   });
 });

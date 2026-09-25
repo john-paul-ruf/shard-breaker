@@ -1,5 +1,11 @@
 import type { ContentCatalog } from "../domain/content/catalog";
-import type { Profile, ProfileCreationMetadata, RunState } from "../domain/run/model";
+import type {
+  LivingRun,
+  Profile,
+  ProfileCreationMetadata,
+  RunState,
+  RunSummarySnapshot,
+} from "../domain/run/model";
 import { createDefaultProfile, CURRENT_RECORD_KEY } from "../domain/run/model";
 import {
   LIVING_RUN_STORE_NAME,
@@ -7,6 +13,7 @@ import {
 } from "../migrations/001_initial";
 import type {
   AbandonRunPersistenceInstruction,
+  FinalizeDeathPersistenceInstruction,
   PersistenceResult,
   RunLifecycleRepository,
   SaveCheckpointPersistenceInstruction,
@@ -421,6 +428,207 @@ async function saveCheckpoint(
   }
 }
 
+/**
+ * Expected-failure detail for a finalize retry against an already-removed
+ * living run: the run ID must match the terminal record so a retried command
+ * cannot finalize a different run, and the profile keeps the first award.
+ */
+function finalizeRetryIssue(
+  instruction: FinalizeDeathPersistenceInstruction,
+  profile: Profile,
+): string | null {
+  if (profile.lastFinalizedRunId === null) {
+    return "lastFinalizedRunId";
+  }
+  if (profile.lastFinalizedRunId !== instruction.runId) {
+    return "runId";
+  }
+  if (profile.lastRunSummary === null) {
+    return "lastRunSummary";
+  }
+  if (profile.lastRunSummary.runId !== instruction.summary.runId) {
+    return "summary";
+  }
+  return null;
+}
+
+/**
+ * CA-14's terminal boundary (database.md: finalize death/completion). One
+ * read/write transaction over both singleton stores: validate the profile,
+ * verify the living run matches the instruction, apply the summary to the
+ * profile, delete the living run, and return the no-run state. A retry after
+ * a committed finalization finds no living run and is rejected without
+ * changes; every write validates through the committed parse boundary.
+ */
+async function finalizeDeath(
+  database: ShardbreakDatabase,
+  catalog: ContentCatalog,
+  instruction: FinalizeDeathPersistenceInstruction,
+): Promise<PersistenceResult<RunState>> {
+  const stores = [PROFILE_STORE_NAME, LIVING_RUN_STORE_NAME] as const;
+  try {
+    const transaction = database.transaction(stores, "readwrite");
+    const [storedProfile, storedLivingRun] = await Promise.all([
+      transaction.objectStore(PROFILE_STORE_NAME).get(CURRENT_RECORD_KEY),
+      transaction.objectStore(LIVING_RUN_STORE_NAME).get(CURRENT_RECORD_KEY),
+    ]);
+
+    if (storedProfile === undefined) {
+      await transaction.done;
+      return expectedFailure(
+        "profile-missing",
+        "No local profile was found.",
+        { operation: "finalize-death" },
+      );
+    }
+    const profileResult = parseProfileRecord(storedProfile, catalog);
+    if (!profileResult.ok) {
+      await transaction.done;
+      return profileResult;
+    }
+
+    // The proposed profile (summary + record + lastFinalizedRunId applied)
+    // must parse before anything is written.
+    const proposedProfileResult = parseProfileRecord(
+      proposalFromInstruction(instruction, profileResult.value),
+      catalog,
+    );
+    if (!proposedProfileResult.ok) {
+      await transaction.done;
+      return proposedProfileResult;
+    }
+    const proposedProfile = proposedProfileResult.value;
+
+    if (storedLivingRun === undefined) {
+      // Retry (or duplicate dispatch) after a committed finalization: the
+      // terminal state is already recorded, so there is nothing to award.
+      const issue = finalizeRetryIssue(instruction, profileResult.value);
+      await transaction.done;
+      return issue === null
+        ? expectedFailure(
+            "living-run-missing",
+            "The run was already finalized.",
+            { operation: "finalize-death", runId: instruction.runId },
+          )
+        : expectedFailure(
+            "invalid-living-run",
+            "The terminal instruction does not match the recorded finalization.",
+            { field: issue },
+          );
+    }
+
+    const livingRunResult = parseLivingRunRecord(storedLivingRun, catalog);
+    if (!livingRunResult.ok) {
+      await transaction.done;
+      return livingRunResult;
+    }
+    if (livingRunResult.value.runId !== instruction.runId) {
+      await transaction.done;
+      return expectedFailure(
+        "stale-run",
+        "The living run changed before it could be finalized.",
+        { expected: instruction.runId, actual: livingRunResult.value.runId },
+      );
+    }
+    if (livingRunResult.value.revision !== instruction.expectedRevision) {
+      await transaction.done;
+      return expectedFailure(
+        "stale-run-revision",
+        "The living run changed before it could be finalized.",
+        {
+          expected: instruction.expectedRevision,
+          actual: livingRunResult.value.revision,
+        },
+      );
+    }
+    // The depleted-integrity precondition is the reducer's authority: the
+    // terminal transition never persists a zero-integrity checkpoint, so the
+    // stored record legitimately stands one loss above zero when the
+    // instruction arrives. Identity, revision, and summary coherence below
+    // are this layer's checks — the same trust level as abandon-run.
+
+    // The summary must describe the run being deleted; the reducer derives
+    // it from the same transition, so a mismatched carrier fails closed.
+    const summaryIssue = summaryMismatchIssue(
+      instruction.summary,
+      livingRunResult.value,
+    );
+    if (summaryIssue !== null) {
+      await transaction.done;
+      return expectedFailure(
+        "invalid-living-run",
+        "The terminal summary does not describe the living run.",
+        { field: summaryIssue },
+      );
+    }
+
+    await transaction
+      .objectStore(PROFILE_STORE_NAME)
+      .put(proposedProfile);
+    await transaction
+      .objectStore(LIVING_RUN_STORE_NAME)
+      .delete(CURRENT_RECORD_KEY);
+    await transaction.done;
+    return { ok: true, value: { profile: proposedProfile, livingRun: null } };
+  } catch (cause) {
+    return transactionFailure("finalize-death", stores, cause);
+  }
+}
+
+/** The next profile record the terminal transition commits. */
+function proposalFromInstruction(
+  instruction: FinalizeDeathPersistenceInstruction,
+  storedProfile: Profile,
+): Profile {
+  const summary: RunSummarySnapshot = instruction.summary;
+  return {
+    ...storedProfile,
+    records: {
+      ...storedProfile.records,
+      highestReachedDepth: Math.max(
+        storedProfile.records.highestReachedDepth,
+        summary.reachedDepth,
+      ),
+    },
+    lastRunSummary: summary,
+    lastFinalizedRunId: summary.runId,
+    revision: storedProfile.revision + 1,
+    lastCommitId: instruction.commitId,
+  };
+}
+
+/** Field name of the first way a summary fails to describe the dying run. */
+function summaryMismatchIssue(
+  summary: RunSummarySnapshot,
+  run: LivingRun,
+): string | null {
+  if (summary.runId !== run.runId) return "runId";
+  if (summary.classId !== run.classId) return "classId";
+  if (summary.reachedDepth !== run.depth) return "reachedDepth";
+  if (summary.bossesReached !== run.progress.bossesReached) return "bossesReached";
+  if (summary.bossesDefeated !== run.progress.bossesDefeated) {
+    return "bossesDefeated";
+  }
+  if (
+    summary.activeSkillIds.length !== run.build.activeSkillIds.length ||
+    summary.activeSkillIds.some((id, index) => id !== run.build.activeSkillIds[index])
+  ) {
+    return "activeSkillIds";
+  }
+  if (
+    summary.passiveEquipmentIds.length !== run.build.passiveEquipmentIds.length ||
+    summary.passiveEquipmentIds.some(
+      (id, index) => id !== run.build.passiveEquipmentIds[index],
+    )
+  ) {
+    return "passiveEquipmentIds";
+  }
+  if (summary.carryOverRelicId !== run.build.carryOverRelicId) {
+    return "carryOverRelicId";
+  }
+  return null;
+}
+
 /** Construct the atomic profile and living-run lifecycle boundary. */
 export function createRunLifecycleRepository(
   database: ShardbreakDatabase,
@@ -436,5 +644,7 @@ export function createRunLifecycleRepository(
       abandonRun(database, catalog, instruction),
     saveCheckpoint: (instruction: SaveCheckpointPersistenceInstruction) =>
       saveCheckpoint(database, catalog, instruction),
+    finalizeDeath: (instruction: FinalizeDeathPersistenceInstruction) =>
+      finalizeDeath(database, catalog, instruction),
   });
 }

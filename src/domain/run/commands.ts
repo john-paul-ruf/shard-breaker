@@ -1,5 +1,5 @@
 import type { ContentId } from "../content/catalog";
-import type { RunState } from "./model";
+import type { RunState, RunSummarySnapshot } from "./model";
 
 /** Serializable loss/clear report the bridge sends; no frame data crosses. */
 export interface CombatOutcomeMessage {
@@ -165,6 +165,14 @@ export type RunPersistenceInstruction =
       readonly runId: string;
       readonly commitId: string;
       readonly expectedRevision: number;
+    }
+  | {
+      readonly kind: "finalize-death";
+      readonly runId: string;
+      readonly commitId: string;
+      readonly expectedRevision: number;
+      /** The terminal summary the repository records in one transaction. */
+      readonly summary: RunSummarySnapshot;
     };
 
 export type RunTransition =

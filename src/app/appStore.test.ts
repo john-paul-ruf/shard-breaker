@@ -71,6 +71,7 @@ function repositoryFor(
     startRun: vi.fn(async () => success(state)),
     abandonRun: vi.fn(async () => success(state)),
     saveCheckpoint: vi.fn(async () => success(state)),
+    finalizeDeath: vi.fn(async () => success(state)),
     ...overrides,
   };
 }
@@ -693,6 +694,23 @@ function createRouteMemoryRepository(
     saveCheckpoint: vi.fn<RunLifecycleRepository["saveCheckpoint"]>(async (instruction: SaveCheckpointPersistenceInstruction) => {
       currentRun = instruction.proposedRun;
       return success({ profile, livingRun: currentRun });
+    }),
+    finalizeDeath: vi.fn<NonNullable<RunLifecycleRepository["finalizeDeath"]>>(async (instruction) => {
+      const summary = instruction.summary;
+      const finalizedProfile: Profile = {
+        ...profile,
+        records: {
+          ...profile.records,
+          highestReachedDepth: Math.max(
+            profile.records.highestReachedDepth,
+            summary.reachedDepth,
+          ),
+        },
+        lastRunSummary: summary,
+        lastFinalizedRunId: summary.runId,
+      };
+      currentRun = null as unknown as LivingRun;
+      return success({ profile: finalizedProfile, livingRun: null });
     }),
   };
 }
@@ -1321,6 +1339,88 @@ describe("createAppStore combat commands", () => {
     expect(snapshot.saveSignal).toMatchObject({
       tone: "saved",
       message: "Combat outcome committed.",
+    });
+  });
+
+  it("finalizes death through the repository and publishes archive truth (CA-14)", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun({ integrityCurrent: 1 });
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-outcome",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+    const depthAtDeath = store.getSnapshot().livingRun!.depth;
+
+    await store.dispatch({
+      type: "combat/report-outcome",
+      outcome: {
+        outcomeId: `${eventKey}:outcome:loss_of_ball:0`,
+        kind: "loss_of_ball",
+      },
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun).toBeNull();
+    expect(snapshot.launchMode).toBe("archive");
+    expect(snapshot.isBusy).toBe(false);
+    const finalizedProfile = snapshot.profile;
+    expect(finalizedProfile).not.toBeNull();
+    expect(finalizedProfile!.lastRunSummary).toMatchObject({
+      runId: livingRun.runId,
+      reachedDepth: depthAtDeath,
+      terminalReason: "death",
+      shardsEarned: 0,
+    });
+    expect(finalizedProfile!.lastFinalizedRunId).toBe(livingRun.runId);
+    expect(snapshot.saveSignal).toMatchObject({ tone: "saved" });
+    expect(
+      vi.mocked(repository.finalizeDeath!).mock.calls.at(-1)?.[0],
+    ).toMatchObject({
+      kind: "finalize-death",
+      runId: livingRun.runId,
+    });
+  });
+
+  it("fails closed when the repository has no finalizeDeath implementation", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun({ integrityCurrent: 1 });
+    const withoutFinalize = createRouteMemoryRepository(profile, livingRun);
+    delete (withoutFinalize as Partial<RunLifecycleRepository>).finalizeDeath;
+    const store = createTestStore(withoutFinalize, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-outcome",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+
+    await store.dispatch({
+      type: "combat/report-outcome",
+      outcome: {
+        outcomeId: `${eventKey}:outcome:loss_of_ball:0`,
+        kind: "loss_of_ball",
+      },
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun).not.toBeNull();
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "rejected",
+      message: "The loss could not be finalized. The prior archive remains available.",
     });
   });
 

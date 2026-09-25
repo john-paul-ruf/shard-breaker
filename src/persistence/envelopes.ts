@@ -89,6 +89,11 @@ export type SaveCheckpointPersistenceInstruction = DomainSaveCheckpointInstructi
   readonly proposedRun: LivingRun;
 };
 
+export type FinalizeDeathPersistenceInstruction = Extract<
+  RunPersistenceInstruction,
+  { readonly kind: "finalize-death" }
+>;
+
 /** Narrow durable surface consumed by the application orchestration boundary. */
 export interface RunLifecycleRepository {
   bootstrapProfile(
@@ -103,5 +108,14 @@ export interface RunLifecycleRepository {
   ): Promise<PersistenceResult<RunState>>;
   saveCheckpoint(
     instruction: SaveCheckpointPersistenceInstruction,
+  ): Promise<PersistenceResult<RunState>>;
+  /**
+   * CA-14's one-transaction terminal boundary. Optional capability: older
+   * repository fixtures without the member report the typed
+   * `transaction-failed`-class refusal through the result channel — the
+   * store treats an absent implementation as fail-closed, never as success.
+   */
+  finalizeDeath?(
+    instruction: FinalizeDeathPersistenceInstruction,
   ): Promise<PersistenceResult<RunState>>;
 }

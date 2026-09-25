@@ -2,7 +2,10 @@ import type { ContentCatalog, ContentId } from "../domain/content/catalog";
 import type { CombatOutcomeMessage, RunRejection } from "../domain/run/commands";
 import type { LivingRun, Profile, RunState } from "../domain/run/model";
 import { runReducer } from "../domain/run/reducer";
-import type { RunLifecycleRepository } from "../persistence/envelopes";
+import type {
+  FinalizeDeathPersistenceInstruction,
+  RunLifecycleRepository,
+} from "../persistence/envelopes";
 import type { AppCommand } from "./commands";
 
 export type LoadStatus = "idle" | "loading" | "ready" | "failed";
@@ -887,6 +890,12 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
         rejectCommand(runRejectionMessage(transition.error));
         return;
       }
+      if (transition.persistence.kind === "finalize-death") {
+        // CA-14: the loss depleted Integrity; the reducer already produced
+        // the terminal summary and the no-run state.
+        await handleCombatFinalizeDeath(transition.persistence);
+        return;
+      }
       if (
         transition.persistence.kind !== "save-checkpoint" ||
         transition.state.livingRun === null
@@ -925,6 +934,48 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
     } catch {
       rejectCommand(
         "The combat outcome could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  /**
+   * The death terminal (CA-14): persist the reducer's finalized profile and
+   * deleted living run through the repository's one-transaction boundary,
+   * then publish archive-mode truth. A missing repository implementation
+   * fails closed — the pre-finalization archive stays published.
+   */
+  async function handleCombatFinalizeDeath(
+    instruction: FinalizeDeathPersistenceInstruction,
+  ): Promise<void> {
+    const finalize = dependencies.repository.finalizeDeath;
+    if (finalize === undefined) {
+      rejectCommand(
+        "The loss could not be finalized. The prior archive remains available.",
+      );
+      return;
+    }
+    try {
+      const committed = await finalize.call(dependencies.repository, instruction);
+      if (!committed.ok) {
+        rejectCommand(
+          `The run could not be finalized. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+
+      publish({
+        profile: committed.value.profile,
+        livingRun: null,
+        launchMode: "archive",
+        isBusy: false,
+        saveSignal: {
+          tone: "saved",
+          message: `Run lost. The archive records Depth ${String(committed.value.profile.lastRunSummary?.reachedDepth ?? 0)}.`,
+        },
+      });
+    } catch {
+      rejectCommand(
+        "The run could not be finalized. The prior archive remains available.",
       );
     }
   }

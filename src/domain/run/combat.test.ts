@@ -17,7 +17,10 @@ import type {
   RunState,
 } from "./model";
 import { createDefaultProfile, createInitialLivingRun } from "./model";
-import { parseLivingRunRecord } from "../../persistence/validation";
+import {
+  parseLivingRunRecord,
+  parseProfileRecord,
+} from "../../persistence/validation";
 import { validateRunState } from "./validation";
 
 const catalog = createContentCatalog();
@@ -985,5 +988,159 @@ describe("CA-13 — clear-time currency grant", () => {
     expectRejection(replay, "duplicate-outcome-id");
     expect(replay.state).toBe(first.state);
     expect(replay.state.livingRun!.runCurrency).toBe(granted);
+  });
+});
+
+describe("CA-14 — death terminal at zero integrity", () => {
+  function stateAtIntegrity(integrity: number): RunState {
+    return runInRoomPhase("battle", { integrityCurrent: integrity });
+  }
+
+  function reportLoss(state: RunState): ReturnType<typeof runReducer> {
+    const room = state.livingRun!.roomState!;
+    return runReducer(
+      state,
+      reportOutcomeCommand(state.livingRun!.revision, {
+        outcomeId: outcomeIdFor(room.eventKey, "loss_of_ball", 0),
+        kind: "loss_of_ball",
+      }),
+      catalog,
+    );
+  }
+
+  it("finalizes at a 1-integrity loss instead of committing a zero-integrity checkpoint", () => {
+    const state = stateAtIntegrity(1);
+    const profileBefore = state.profile;
+    const runBefore = state.livingRun!;
+
+    const transition = reportLoss(state);
+
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    const finalized = transition.state;
+    expect(finalized.livingRun).toBeNull();
+    expect(finalized.profile.revision).toBe(profileBefore.revision + 1);
+    expect(finalized.profile.lastFinalizedRunId).toBe(runBefore.runId);
+    expect(finalized.profile.records.highestReachedDepth).toBe(
+      Math.max(profileBefore.records.highestReachedDepth, runBefore.depth),
+    );
+    const summary = finalized.profile.lastRunSummary;
+    expect(summary).not.toBeNull();
+    expect(summary).toMatchObject({
+      runId: runBefore.runId,
+      classId: runBefore.classId,
+      reachedDepth: runBefore.depth,
+      bossesReached: runBefore.progress.bossesReached,
+      bossesDefeated: runBefore.progress.bossesDefeated,
+      activeSkillIds: [...runBefore.build.activeSkillIds],
+      passiveEquipmentIds: [...runBefore.build.passiveEquipmentIds],
+      carryOverRelicId: runBefore.build.carryOverRelicId,
+      shardsEarned: 0,
+      terminalReason: "death",
+      completedAt: 1_700_000_000_500,
+    });
+    expect(transition.persistence).toMatchObject({
+      kind: "finalize-death",
+      runId: runBefore.runId,
+      commitId: "commit-outcome",
+      // The instruction names the revision the durable record still carries
+      // (the pre-transition revision), matching every other instruction.
+      expectedRevision: runBefore.revision,
+    });
+    if (transition.persistence.kind === "finalize-death") {
+      expect(transition.persistence.summary).toEqual(summary);
+    }
+  });
+
+  it("keeps the committed floor-entry rule: an existing deeper record is never lowered", () => {
+    const deeperProfile: Profile = {
+      ...makeProfile(),
+      records: {
+        highestReachedDepth: 9,
+        highestBossDepth: 6,
+        bossesDefeated: 2,
+      },
+    };
+    const state = {
+      ...runInRoomPhase("battle", { integrityCurrent: 1 }),
+      profile: deeperProfile,
+    };
+    const transition = reportLoss(state);
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.profile.records.highestReachedDepth).toBe(9);
+    expect(transition.state.profile.records.highestBossDepth).toBe(6);
+    expect(transition.state.profile.records.bossesDefeated).toBe(2);
+  });
+
+  it("records a reached boss floor as the depth when death follows the boss room", () => {
+    const state = runInRoomPhase("boss", { depth: 3, cycle: 1, integrityCurrent: 1 });
+    const transition = reportLoss(state);
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.profile.records.highestReachedDepth).toBe(3);
+    expect(transition.state.profile.lastRunSummary?.reachedDepth).toBe(3);
+  });
+
+  it("still commits a normal save-checkpoint for a loss above the zero boundary", () => {
+    const state = stateAtIntegrity(3);
+    const transition = reportLoss(state);
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.livingRun).not.toBeNull();
+    expect(transition.state.livingRun!.integrityCurrent).toBe(2);
+    expect(transition.persistence).toMatchObject({ kind: "save-checkpoint" });
+    expect(transition.state.profile.lastRunSummary).toBeNull();
+  });
+
+  it("rejects a loss against an already-depleted run and changes nothing", () => {
+    const state = stateAtIntegrity(1);
+    const first = reportLoss(state);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    // A retried loss against the finalized (no-run) state finds no living run.
+    const retry = runReducer(
+      first.state,
+      reportOutcomeCommand(first.state.profile.revision, {
+        outcomeId: `route:content-1:run-1:1:room:room-battle-glassway:outcome:loss_of_ball:1`,
+        kind: "loss_of_ball",
+      }),
+      catalog,
+    );
+    expectRejection(retry, "no-living-run");
+    expect(retry.state).toBe(first.state);
+  });
+
+  it("carries the terminal summary through parseProfileRecord and domain validation", () => {
+    const state = stateAtIntegrity(1);
+    const transition = reportLoss(state);
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+
+    const profileResult = parseProfileRecord(transition.state.profile, catalog);
+    expect(profileResult.ok).toBe(true);
+    const runStateResult = validateRunState(transition.state, catalog);
+    expect(runStateResult).toEqual({ ok: true });
+  });
+
+  it("summarizes the build at death, not an empty starter build", () => {
+    const state = runInRoomPhase("battle", {
+      integrityCurrent: 1,
+      build: {
+        activeSkillIds: [asContentId("skill-prism-burst")],
+        passiveEquipmentIds: [asContentId("equipment-fractal-core")],
+        carryOverRelicId: null,
+      },
+    });
+    const transition = reportLoss(state);
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.profile.lastRunSummary?.activeSkillIds).toEqual([
+      "skill-prism-burst",
+    ]);
+    expect(transition.state.profile.lastRunSummary?.passiveEquipmentIds).toEqual([
+      "equipment-fractal-core",
+    ]);
   });
 });
