@@ -108,7 +108,43 @@
 
 | Date | Change |
 |------|--------|
+| 2026-09-24 | combat-engine SESSION-06: CA-11 seeded boss-modifier selection (≤2, cycle ≥2, archetype-compatible, shared stream), strict-shape boss emission, and the BOSS_ROOM_MAX_DENSITY cap — see the fragment below. |
 | 2026-08-29 | Imported deep-file contract into the Forge registry. |
 | 2026-08-30 | Added v1 named streams plus deterministic route, threat, Shop, Recovery, room, and boss-routing candidates. |
 | 2026-09-15 | room-resolution SESSION-01: Added `generateRewardDraft` and the reward-draft public API; authorized type-only `EffectParam` import recorded. |
 | 2026-09-22 | Archivist final reconciliation: folded the type-only-import authorization into the dependency rules (one rule, one home), removed the redundant SESSION-01 fragment, and added `generateRoomCandidate` to the Public API (it was exported and consumed but unlisted). |
+
+
+<!-- combat-engine SESSION-06 -->
+## Boss modifier generation (combat-engine SESSION-06)
+
+- `GeneratedBossState` narrowed to the four durable fields (`archetypeId`,
+  `modifierIds`, `phaseId: "routing"`, `defeated: false`) — the S02-era
+  `displayName`/`identityLabel` riders removed. Evidence: `bossStateSchema`
+  (`src/persistence/validation.ts`) is a zod strict object of exactly those
+  four fields and the reducer maps `candidate.boss` verbatim into
+  `RoomState.boss`; a boss-room save through the real repository rejected with
+  `invalid-living-run` before the fix. `round-trips-persistence` +
+  `rejects-display-field-riders` rows prove both directions. Display identity
+  stays catalog-resolved through `archetypeId`.
+- New exports: `MAX_BOSS_MODIFIERS = 2` (CA-11 cap) and
+  `BOSS_ROOM_MAX_DENSITY = 10` — boss-room formation density is capped so
+  S05's composed boss anatomy always fits above the paddle (without the cap,
+  `createBossCombatState`'s fail-closed anatomy guard tripped for every
+  production boss room at density 9+). Threat-composition property of M02; the
+  combat layer's guard is never loosened.
+- `generateBossState` and `generateThreatProfile` fill `modifierIds` /
+  `bossModifierIds` from one shared CA-11 rule: `cycle >= 2` gate, only the
+  routed archetype's compatible modifiers (`compatibleArchetypeIds === "any" ||
+  includes(archetypeId)`), shuffled on stream `<roomEventKey>:boss-modifiers`,
+  sliced to ≤ 2. `boss.modifierIds` is authoritative;
+  `threatProfile.bossModifierIds` is the display projection derived by the same
+  rule; `routedBossIdentity` is shared so both producers name the same
+  archetype. CA-12 proven through the composition path: unknown/incompatible/
+  duplicate/stored-import IDs are ignored with bounded diagnostics and never
+  throw mid-volley (`bossState.test.ts` composition rows).
+- M09 public API unchanged: `createBossCombatState` consumes
+  `BossCombatInitContext.modifierIds` (S05); `layout.ts` gained no additive
+  context field — the base arena is deliberately modifier-independent (modifier
+  effects compose only in the boss layer, keeping rebuilds/replays stable); new
+  `layout.test.ts` pins context-passthrough and instance-ID-disjointness rows.
