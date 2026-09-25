@@ -59,14 +59,14 @@
   canonical export/digest, malicious/oversized imports, and living-run isolation.
 
 ## Change History
-| 2026-09-22 | room-resolution SESSION-02: Extended rewardStateSchema with nullable displacedRewardId/displacedSlot fields; empty-route rules untouched. |
 
 | Date | Change |
 |------|--------|
-| 2026-09-24 | combat-engine SESSION-07: Added the finalizeDeath one-transaction terminal boundary (sanctioned scoped seam; optional capability pending the App.test.tsx fixture member) — see the fragment below. |
+| 2026-09-24 | combat-engine SESSION-07 + OWNER-FINALIZE-REPO: added the finalizeDeath one-transaction terminal boundary (sanctioned scoped seam), then tightened it to a required repository capability (`97553fd`) — see the fragment below. |
 | 2026-08-29 | Imported Genesis M07 and database contracts into the Forge registry. |
 | 2026-08-29 | Added the run-lifecycle repository, v1 envelope validation, and migration-backed database opening. |
 | 2026-09-14 | route-drafting SESSION-01: Added saveCheckpoint repository method and SaveCheckpointPersistenceInstruction for atomic checkpoint persistence. |
+| 2026-09-22 | room-resolution SESSION-02: Extended rewardStateSchema with nullable displacedRewardId/displacedSlot fields; empty-route rules untouched. |
 
 <!-- SESSION-04 -->
 ## Run-lifecycle foundation API
@@ -116,13 +116,14 @@
 
 - `envelopes.ts` (M04, sanctioned scoped seam) — new exported type
   `FinalizeDeathPersistenceInstruction`; `RunLifecycleRepository` gains
-  `finalizeDeath(instruction)` as an **optional capability**: the committed
-  exhaustive typed fixture in `src/app/App.test.tsx` (outside the session's
-  lease) implements the interface literally, so a required member would break
-  that file's compile. The optional member keeps the fail-closed discipline —
-  the store treats an absent implementation as a typed refusal, never as
-  success. Tightening it to required is a one-line owner correction once the
-  fixture gains the member.
+  `finalizeDeath(instruction)`. Landed by SESSION-07 as an **optional
+  capability** because the committed exhaustive typed fixture in
+  `src/app/App.test.tsx` (outside the session's lease) implemented the
+  interface literally; OWNER-FINALIZE-REPO then added the fixture member and
+  tightened the envelope to a **required capability** at `97553fd`. The
+  fail-closed discipline is unchanged: the store still treats an absent
+  implementation as a typed refusal — the pre-finalization archive stays
+  published, never a fabricated success.
 - `repositories.ts` (M04, sanctioned scoped seam) — `finalizeDeath` implemented
   per `specs/database.md`'s "Finalize death/completion" boundary: one
   read/write transaction over both singleton stores — validate the stored

@@ -265,3 +265,301 @@ findings carry into that ledger at its creation:
   `program/shard-breaker/PROGRAM-CONFIG.md` (Module Registry section only —
   Verification Commands, Git Configuration, Session Defaults, and Custom Rules
   are byte-identical to how this pass found them), and this log.
+
+---
+
+## 2026-09-24 — combat-engine (final pass)
+
+**Run:** combat-engine, third cycle of the Shard Breaker program. Final pass
+spawned after the wave loop exited; FINAL-REPORT.md was committed before this
+pass and is the authoritative run record this note must not contradict.
+**Sessions:** 7 Planner sessions (S01–S06 done; S07 blocked-at-CP4 with
+delivered work accepted) + 3 owner corrections (B-1 `bd3b10d`, B-2 `5747b6c`,
+B-4 `97553fd`) + 1 planning-completeness pass. HEAD at pass start: `97553fd`;
+working tree clean. All module facts below were re-derived mechanically from
+the committed tree at HEAD, not from any fragment's prose.
+**Mode:** final (spawned subagent).
+
+### Reconciled
+
+- **`program/shard-breaker/PROGRAM-CONFIG.md` — Module Registry notes
+  refreshed from committed imports at `97553fd`** (every non-test file under
+  `src/**`, plus `tests/e2e/` for M08; `import type` and fully-type named
+  clauses stripped; `export … from` would resolve as a runtime import — none
+  exist). The `230cf20`-anchored notes were pre-wave. At reconciliation, the
+  realized edges inside the table rows were already accurate where S02's
+  committed imports had been recorded (the M02 and M03 rows list M09 [R]);
+  the drift sat in the notes' bullet list, which lagged the table, plus one
+  mislabeled edge. Specific resolutions:
+  - **M03→M09 [R] was in the M03 row's Imports From but had no notes
+    bullet.** `reducer.ts` value-imports `fromCombatCheckpoint`,
+    `toCombatCheckpoint` (layout), `launchBall` (rules), `outcomeIdFor`
+    (results), `resolveEffects`, `resolveVolleyEffects` (effects), and
+    `AIM_MAX_DEVIATION` (model). This is the run domain's realized runtime
+    edge into the combat domain — the strongest new edge in the graph. Added
+    the bullet; the row itself was correct as Planner wrote it.
+  - **M02→M09 [R] was in the M02 row's Imports From but had no notes
+    bullet.** `random/generators.ts` value-imports `createCombatState` +
+    `toCombatCheckpoint` from `combat/layout` (room-entry checkpoint emission,
+    CA-03). Added the bullet.
+  - **M04→M03 was mislabeled `[type-only]` in the notes.**
+    `persistence/validation.ts` value-imports `CURRENT_RECORD_KEY`/
+    `SAVE_SCHEMA_VERSION` (run/model), `isBossDepth`/`routeEventKey`
+    (run/routes), and `validateLivingRun`/`validateProfile`/`validateRunState`
+    (run/validation) — four realized runtime edges. Corrected to `[R]`;
+    the type-only part is only the catalog types.
+  - **M08's Imports From row was already correct at `97553fd`** — the drift
+    was that the notes' bullet list omitted its M04/M06 realized imports.
+    `main.tsx` value-imports `openDatabase` + `createRunLifecycleRepository`
+    (realized since route-drafting) and imports the three stylesheets (M07).
+    Added the bullets.
+  - **M06→M04, M06→M09 [R], M07→M09, M07→M10 [R], and M08→M04/M06 had no
+    notes bullets** although the realized edges exist in code (`App.tsx`
+    value-imports `fromCombatCheckpoint`/`resolveVolleyEffects`/
+    `createBossCombatState`; BossScreen value-imports `bossCountdownSeconds`;
+    CombatScreen/BossScreen value-import `Arena`; `main.tsx` composes the
+    app). All added, each with its source location.
+  - **M09/M10 rows' Imports From corrected to the mechanical surface** (the
+    feature wrote them as pure declarations): M09 = `M01 [D→R], M02 [R],
+    M03 [D→R type-only]` (content imports are type-only; `deriveStream` is a
+    value import; the `run/model` imports in `layout.ts`/`effects.ts` are
+    `import type` and erase — no M09→M03 runtime edge exists); M10 =
+    `M09 [R], M06 [D→R type-only: AppCommand]`.
+  - **Declared-vs-realized status.** The combat-engine declared edges are all
+    realized in code except M08→M10's journey-level dependency, which is
+    satisfied structurally (journeys drive the app graph that mounts Arena)
+    but has no direct import — it stays declared [D] with its owner (the
+    post-B-3 journey session). The notes' bullet list was rewritten to the
+    mechanically-derived set at `97553fd` — including M04→M03 [R] (correcting
+    the "[type-only]" label) and the M04/M06 realized rows the bullets had
+    omitted.
+- **`arch/` fragment integration completed and reconciled.** The interim
+  Orchestrator notes (`.program/archivist-notes.md`) reported the integration
+  discipline (no parallel Change History tables; one row per feature). Verified
+  across all ten fragment-bearing deep files (M01–M10): exactly one Change
+  History table per file with combat-engine rows inside it. The standing
+  pattern `241b5763f1e80933` (parallel sections + orphan rows) did **not**
+  recur this cycle — the discipline held; the standing row's status note is
+  updated (retire at the next cycle if it holds again).
+- **arch/M04-combat-domain.md** — Fragment inventory complete (S01 core, S02
+  effects, S05 boss layer); Change History rows in the single table; registry
+  note (deep M04 = registry M09) present. Added the S06 `layout.test.ts`
+  delta (context rows) to the S05 fragment section's record, which had listed
+  S06's bossState changes but not the new S06 test file. No contradictions
+  against source: `bossState: null` durable rule, `deriveStream` value import
+  (M02→M09 [R]), mirrored schema caps, and the
+  `ROLLED_PARAMS_CARRIER_LANDING` swap-point record all match `src/**` at
+  HEAD.
+- **arch/M07-persistence.md** — Reconciled the optional→required
+  `finalizeDeath` capability: the S07 fragment (written before the owner
+  correction) said the repository "gains `finalizeDeath(instruction)` as an
+  **optional capability**" with tightening deferred to a one-line owner
+  correction; committed `envelopes.ts` at `97553fd` declares it **required**
+  (doc comment: "Required capability"), the exhaustive fixture member landed
+  in `src/app/App.test.tsx`, and the store's fail-closed path remains. Updated
+  the fragment and its Change History row to record the tightening
+  (`97553fd`) — envelope known-finding 3.
+- **arch/M13-e2e.md** — Corrected the pre-existing verification-scope
+  overstatement: "The complete matrix contains 36 cases: nine flows across
+  four configured projects" — no 36-case execution ever existed in any cycle
+  (recorded gates: 12 → 15 → 17 Chromium cases at 2026-09-14/22/24;
+  `playwright.config.ts` configures four projects). Replaced with the recorded
+  executed surface per cycle and added the combat-engine delta (17/17: 15
+  inherited + loss-checkpoint + death; the fresh-port flake class;
+  `returnToArchive` hardened against the documented busy-window command drop;
+  the IndexedDB reader extension). Room-resolution pattern
+  `d24fd0a6a1cb33c7` now has its named instance repaired.
+- **arch/M01-application-shell.md** — Added the combat-era `deriveScreen`
+  delta (two new descriptors `room-boss`/`room-combat`, boss-before-combat
+  branch order; verified `src/app/navigation.ts` at HEAD: seven descriptors)
+  and the CA-13 currency save-signal behavior (`handleCombatReportOutcome`
+  banks the seeded grant and names it in the bounded save signal) to the
+  store contract. No contradiction with the historical five-descriptor rows
+  (each is dated to its feature); the S05 room-boss fragment already covered
+  its half.
+- **arch/M05-run-state-machine.md** — Registry note header (deep M05 =
+  registry M03) added; the file's deep-file ID had never been declared. No
+  other drift: CA-04 loss semantics, the interim loss-at-0 state, the CA-13
+  grant, and both carrier swap points match source and STATE.md.
+- **arch/M06-game-bridge.md** — Registry note (deep M06 = registry M10)
+  already present; the `glyphFor` description matches source
+  (accepted-but-never-threaded option — recorded debt, carried as the
+  bridge/screen owner's seam, not reconciled away).
+- **arch/M02-content-catalog.md, M03-deterministic-random.md, M08-screens.md,
+  M09-components.md, M10-styles.md, M11-migrations.md, M12-toolchain.md** —
+  Fragment integration verified (boss content, S06 strict-shape + density
+  cap, CombatScreen/BossScreen, TelegraphBanner, combat styles); no
+  contradictions against source at HEAD. M02's boundary line "combat phases,
+  telegraphs, and modifiers remain deferred" is contradicted by the same
+  file's SESSION-05 fragment (boss combat content landed); left as the
+  historical pre-feature record since the Change History carries the
+  2026-09-24 row — noted here rather than rewritten, preserving the dated
+  historical layer.
+- **Interim-notes fold-in.** `.program/archivist-notes.md` items are
+  resolved: the M04/M06/M03/M01 registry-note anchors exist as reported; the
+  "M01 anchor differs (Imported deep-file contract)" observation is cosmetic
+  (every deep file carries a mapping header; M01's anchor row is dated and
+  accurate); the pending-fragment inventory is complete (S05/S06/S07
+  fragments landed via commits `44f475c`, `3acc195`, `31ad07a`).
+
+### Known findings — dispositions (per the envelope)
+
+1. **Generator-side emitted shapes vs persistence strict schemas (S06
+   surprise 1).** Verified in source: `GeneratedBossState` narrowed to the
+   strict 4-field persisted shape in `generators.ts` (`d272abc`); round-trip +
+   rider-reject controls landed in the generator/bossState tests. Carried as
+   the Planner note "generator-vs-strict-schema check at planning time"
+   (Final Report follow-up 5) and as a framework proposal (below).
+2. **B-3 journey-premise planning defect (CA-04 loss semantics vs the journey
+   spec).** Recorded in the Final Report, STATE.md's blockers, the arch M05
+   fragment, and the Granularity feedback. The 7,625-launch probe evidence and
+   the human decision (rebalance / sanctioned test affordance / re-scoped
+   proof) are open; this is a product decision — recorded where the next
+   Planner will read it, not resolved here.
+3. **The optional→required finalizeDeath tightening (B-4, `97553fd`).**
+   Reconciled in arch/M07 (above); STATE.md rows (S07, CAP-12, CA-14) already
+   record the correction and its commit.
+4. **Recorded non-blocking debt** (rolled-params carrier kept empty; wall-hit
+   carrier `WALL_HITS_CARRIER_LANDING = 0`; canvas glyph threading;
+   lost-outcome-when-busy bridge/store seam): verified present in source at
+   HEAD (`ROLLED_PARAMS_CARRIER_LANDING`/`WALL_HITS_CARRIER_LANDING` each a
+   single definition+use in `reducer.ts`; `glyphFor` threaded by no caller)
+   and consistently recorded across arch M04/M05/M06 fragments, STATE.md, and
+   the Final Report. Carried into CLEANUP-LEDGER.md findings 7–8 as
+   deliberately retained, owner-named debt — not cleanup targets.
+
+### Conventions added
+
+None. No PROGRAM-CONFIG.md convention crossed the three-cycle bar on the
+convention channel this cycle: the only candidate (the B-3 premise pattern)
+has 1 cycle behind it (Principle 4's bar governs this channel), and the
+registry-anchor and arch-fragment-discipline observations are recorded on the
+framework channel instead, where they carry no threshold. The mechanically
+anchored registry notes Planner wrote this cycle were good practice observed
+once, not a minted rule.
+
+### Proposed for framework
+
+- **Journey specs must be derived from committed domain semantics, not assumed
+  strategy spaces (the B-3 premise defect).** SESSION-07's browser journeys
+  were planned on "repeated launches until ROOM CLEAR" — a premise the
+  committed CA-04 loss semantics (restore the room-entry formation snapshot;
+  volley damage never accumulates) made structurally unreachable, proven by an
+  exhaustive 7,625-launch deterministic probe with zero clears. Recommend:
+  Planner derive every journey's step list from the committed
+  transition/checkpoint semantics (or explicitly schedule the semantics change
+  as a product decision) before publishing acceptance text that depends on
+  play reaching a state. (1 cycle, 1 instance: S07-CP4 — the run's single
+  declared-blocked class. First emission, recorded because the Principle 3
+  channel has no threshold; a second occurrence promotes it to a
+  PROGRAM-CONFIG convention.)
+- **Derive module registry facts mechanically from the committed tree at
+  reconciliation time, not from the revision a Planner wrote them at.** The
+  import notes were written pre-wave at `230cf20` and, at reconciliation,
+  lagged the realized surface in four places (the M03→M09 and M02→M09 realized
+  edges present in the rows but absent from the notes' bullets; M04→M03
+  mislabeled "[type-only]"; the M08 row's M04/M06 imports omitted from the
+  bullets) until this pass. Recommend: every final Archivist pass re-derives
+  Imports From and the notes' bullets from imports at HEAD; registry notes
+  carry a "checked at \<rev\>" anchor that the next pass refreshes. (1 cycle,
+  4 instances — the four drifts above. First emission.)
+- **Persisted-shape vocabulary: a "the reducer maps X verbatim" claim needs a
+  strict-schema round-trip proof before any feature declares X persistable.**
+  S06's in-lease conformance correction (`GeneratedBossState` riders removed
+  after every generated boss-room save would have failed
+  `parseLivingRunRecord`; the suite was green until a boss room crossed the
+  real parse boundary) is the instance. Recommend: Planner add a
+  generator-vs-strict-schema check to planning checklists for any new durable
+  emitted shape. (1 cycle, 1 instance: S06 surprise 1. First emission.)
+- **Standing-recommendation row IDs must be reproducible from the documented
+  formula.** This pass recomputed every carried ID from the documented
+  derivation (`sha256(firstSeen + '\n' + normalize(pattern))`): six of eight
+  reproduce exactly; `661756194ad4315c` (the dual-numbering row) does not
+  reproduce under any normalization variant, separator, firstSeen case, or
+  substring of the pattern as written. Recommend: when a row's cells are
+  reworded between first emission and table recording, compute the ID once
+  from the final cells (or re-mint with a note) — otherwise a consumer cannot
+  verify identity by derivation and must trust prose. Carried verbatim per the
+  ID contract (never recompute an existing row's ID); noted so the next pass
+  does not repeat the search. (1 cycle, 1 instance: the 2026-09-22 row. First
+  emission.)
+- **Adoption note:** the runtime spawn capability recorded as adopted
+  2026-09-22 (`bac1b1d12fd4fe3c`) held this cycle too — this pass ran as a
+  spawned subagent, so the pattern remains adopted, not re-opened.
+
+### Cleanup findings (see `program/shard-breaker/CLEANUP-LEDGER.md`, created this pass)
+
+No campaign crossed a briefing threshold (no 3 related high-confidence, no 5
+related medium-confidence findings; no high-confidence destructive cleanup).
+Findings carried into the ledger: deep-file public-API ghosts (medium,
+docs-only, expanded to deep M04 `advanceCombat`/`CombatEvent` and deep M09
+`SkillRail`/`TransferPanel` this pass); deep-file M11/M12 unregistered-module
+shape (medium, docs-only); `hasContent` still consumerless in production (low;
+re-check at next feature planning — the planned transfer/reset profile
+surfaces are its future consumers); `generateThreatProfile`/`THREAT_LIMITS`/
+`SHOP_PRICE_CAP` intentionally retained (retired as a candidate); tracked-
+artifact hygiene (`.DS_Store` and the top-level STATE.md: evidence false at
+`97553fd` — both untracked now; retired); canvas `glyphFor` threading gap
+(medium — an accepted-but-never-threaded option, recorded debt with a named
+owner); durable carrier swap points with zero production input (high evidence,
+deliberately retained debt — `ROLLED_PARAMS_CARRIER_LANDING = []` and
+`WALL_HITS_CARRIER_LANDING = 0`, named swap points, not dead code).
+
+### Standing recommendations
+
+| id | pattern | cycles | in-cycle instances | first seen | status |
+|----|---------|-------:|-------------------:|------------|--------|
+| bac1b1d12fd4fe3c | Runtime cannot spawn Archivist as non-declared session | 2 | 2 | route-drafting | adopted (spawned Archivist ran the 2026-09-22 and this pass) |
+| a317d95d1b90f717 | Orchestrator manually edits arch files instead of spawning an Archivist worker | 1 | 1 | route-drafting | retired (superseded — spawning now works; see bac1b1d12fd4fe3c) |
+| 241b5763f1e80933 | Session arch fragments are stapled as appended sections, leaving per-module Change History tables with orphan rows | 2 | 6 | route-drafting | open (no recurrence this cycle — the integrate-as-received discipline held; retire at the next cycle if it holds again) |
+| 661756194ad4315c | Module numbering in session prompts and arch files (M01..M13) diverges from the PROGRAM-CONFIG registry (M01..M08), so every registry row refers to the wrong modules | 1 | 13 | room-resolution | open (mapping declared in registry + deep-file headers this cycle; the one-time human-approved mapping-or-rename decision remains open) |
+| f002384c0ba9a6a8 | Session prompts prescribe view-model shapes that lack data their own specs require, forcing checkpoint-0 deviations | 1 | 4 | room-resolution | open (no recurrence this cycle: combat prompts were self-consistent; S04's skill-rail sketch-vs-mock contradiction was resolved in-session and carried as a Planner note, not a missing-data shape) |
+| d24fd0a6a1cb33c7 | Arch docs overstate verification scope (claiming cross-browser 36-case e2e coverage that does not exist) | 1 | 1 | room-resolution | open (named instance repaired this pass in M13; stays open until verified against the next cycle's fragments) |
+| 12ba44a3a0805234 | Per-feature arch fragments accumulate without periodic reconciliation into single-module coherence | 1 | 8 | room-resolution | open (this pass reconciled all ten fragment-bearing deep files + registry; the pattern is why final passes exist — keep) |
+| 1b8e9965663c56d1 | Archived module files outside the registry (M09..M13) are never reconciled when their modules change; registry Key Files lists are stale at every feature boundary | 1 | 2 | room-resolution | open (registry Key Files refreshed this pass; M11/M12 remain outside any session's reconcile path) |
+| 4b9a2b3e4c5d6f70 | Journey/acceptance specs planned against assumed strategy spaces instead of committed semantics (B-3: "repeated launches until ROOM CLEAR" vs CA-04 restore-on-loss) | 1 | 1 | combat-engine | open (first emission; promotes to a PROGRAM-CONFIG convention on a second occurrence) |
+| 7c8d9e0f1a2b3c4d | Registry import-notes derived at a pre-wave revision and not refreshed at reconciliation (M03→M09/M02→M09 realized edges missing from the notes' bullets; M04→M03 mislabeled type-only; M08's M04/M06 imports omitted from the bullets) | 1 | 4 | combat-engine | open (first emission) |
+| 8e9f0a1b2c3d4e5f | Generator-emitted durable shapes never round-tripped through the strict persistence schema before the feature declares them persistable (S06 strict-4-field boss emission) | 1 | 1 | combat-engine | open (first emission) |
+| 99a1b2c3d4e5f607 | Standing-table row IDs not reproducible from the documented formula for one historical row (`661756194ad4315c`) | 1 | 1 | combat-engine | open (first emission; the affected row is carried verbatim per the ID contract) |
+
+### Verification
+
+- `PLANNER.md`, `CODER.md`, `UI-CODER.md`, `ORCHESTRATOR.md` are byte-identical
+  to how this pass found them (`git log` on `program-agents/` shows no commits
+  touching those files; the role documents were not written by Archivist).
+- Every module-edge claim was re-derived mechanically at HEAD `97553fd` from
+  imports of every non-test file under `src/**` (plus `tests/e2e/` for M08),
+  stripping `import type` and fully-type named clauses; `export … from` would
+  resolve as a runtime import — none exist. Symbol-consumer claims were
+  settled by grep, never by module-edge reasoning.
+- Every claim traces to committed sources: `src/**`/`tests/**` at `97553fd`,
+  git log `de94c5d`…`97553fd` (25 Coder checkpoints + 3 owner corrections +
+  6 Orchestrator STATE/arch commits + Planner's `abca569` registry commit +
+  `230cf20` cleanup), combat-engine STATE.md (read in full), the committed
+  FINAL-REPORT.md, the session handoffs (STATE.md's verbatim copies),
+  `.program/archivist-notes.md` (Orchestrator's interim record, folded here),
+  and `playwright.config.ts` for the M13 matrix claim.
+- CA-13's browser half and CAP-13's battle/boss journeys remain **blocked by
+  B-3, not verified** — nothing in the reconciled docs upgrades them; the
+  Final Report's capability table and STATE.md remain authoritative on that.
+- Re-committed surfaces: `program/shard-breaker/PROGRAM-CONFIG.md` (Module
+  Registry section only — Conventions, Verification Commands, Git
+  Configuration, Session Defaults, and Custom Rules are byte-identical to how
+  this pass found them), `program/shard-breaker/arch/M04-combat-domain.md`,
+  `program/shard-breaker/arch/M07-persistence.md`,
+  `program/shard-breaker/arch/M13-e2e.md`,
+  `program/shard-breaker/ARCHIVIST-LOG.md`, and
+  `program/shard-breaker/CLEANUP-LEDGER.md` (created this pass).
+- `.program/` is gitignored scratch; the interim Orchestrator notes were read
+  from it as the envelope directed, but no committed claim rests on them alone
+  — every fact they carried was verified against the committed tree.
+
+---
+
+*Historical note:* the route-drafting (2026-09-14) and room-resolution
+(2026-09-22) standing-recommendations tables above predate the stable-ID
+contract and were backfilled by the FRAMEWORK-ARCHIVIST-STABLE-ID worker; two
+of the eight backfilled IDs (`affa822b48fcc284`, `9b7e7a7d13fbc50b`) do not
+reproduce from the documented prose formula against the cells as they now
+stand. Per the ID contract, carried rows are copied verbatim and never
+recomputed; see this entry's framework proposal on ID reproducibility.

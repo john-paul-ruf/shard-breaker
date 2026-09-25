@@ -155,6 +155,7 @@ not mutate domain state or call IndexedDB directly.
 | Date | Change |
 |------|--------|
 | 2026-09-24 | combat-engine SESSION-05: Added the room-boss screen branch and boss model builder. |
+| 2026-09-24 | combat-engine SESSION-04/07: Added the room-combat screen branch, combat model builder, combat app command surface, and the CA-13 banked-currency save signal. |
 | 2026-08-29 | Imported deep-file contract into the Forge registry. |
 | 2026-08-29 | Added the serialized durable application store, launch navigation, React binding, and browser composition root. |
 | 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |
@@ -182,3 +183,37 @@ not mutate domain state or call IndexedDB directly.
   step-derived countdown text, boss integrity meter, S04 Arena host, Breach
   action, clear-gated advance. 14 screen tests + App derivation/composition
   rows.
+
+<!-- combat-engine SESSION-04/07 (Archivist-integrated record) -->
+## Combat screen branch, combat commands, and currency save signal (combat-engine)
+
+- `src/app/commands.ts` — `AppCommand` extended with `combat/launch` (carries
+  `aimAngle`), `combat/use-skill` (carries `skillId`),
+  `combat/report-outcome` (carries the room-scoped `CombatOutcomeMessage`);
+  all durable (`isDurableCommand`). Bounded rejection messages cover the
+  combat codes (`combat-checkpoint-missing`, `invalid-aim-angle`,
+  `unknown-outcome-id`, `duplicate-outcome-id`, skill codes).
+- `src/app/appStore.ts` — three new durable handlers following the
+  `saveCheckpoint` pattern: `handleCombatLaunch` (persists the unchanged valid
+  pre-launch checkpoint and flips the room to `in_progress`; the live volley
+  is the bridge's ephemeral session), `handleCombatUseSkill`, and
+  `handleCombatReportOutcome`. The outcome handler branches on the
+  transition's instruction kind: `finalize-death` routes to the repository's
+  one-transaction terminal boundary and publishes archive-mode truth
+  (`livingRun: null`); otherwise it persists the checkpoint and banks the
+  seeded clear-time currency (CA-13) — the bounded save signal names the
+  amount ("Room resolved. <n> room shards banked.") when the committed
+  `runCurrency` delta is positive.
+- `src/app/navigation.ts` — `ScreenDescriptor` gains `{ id: "room-combat" }`;
+  `deriveScreen` returns it for room-phase runs whose `roomState.roomType` is
+  battle/elite, keeping `{ id: "room" }` for utility rooms. Current descriptor
+  set at HEAD `97553fd` (seven): `home/archive`, `home/checkpoint`,
+  `route-map`, `room`, `room-boss`, `room-combat`, `reward`.
+- `src/app/App.tsx` — `createCombatModel(state, catalog)` mirrors
+  `createRoomModel`: catalog-resolved skill display from
+  `checkpoint.skillCharges`, passive summary, the clear-outcome gate, a
+  telegraph projection from the checkpoint's pending hazard, and the two Arena
+  closures — `createInitialState` (`fromCombatCheckpoint` over run/room
+  context) and `resolveVolleyEffects` (S02's production resolver closed over
+  catalog/build/charges with the empty `ROLLED_PARAMS_CARRIER_LANDING` params
+  per the recorded deferral). Realizes the M06→M09 [R] App-side edge.

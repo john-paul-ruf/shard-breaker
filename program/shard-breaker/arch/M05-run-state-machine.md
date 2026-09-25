@@ -1,5 +1,12 @@
 # M05 — Run and Profile State Machine
 
+> **Registry note:** This file is a per-module deep record for the run domain.
+> In PROGRAM-CONFIG.md's Module Registry this module is row **M03**
+> (Run domain, `src/domain/run/`); the ID in this heading follows the archived
+> per-module deep-file numbering (M01–M13). Program sessions and STATE.md use
+> the registry IDs — see the PROGRAM-CONFIG registry for the authoritative
+> list.
+
 ## Boundary
 
 - **Path:** `./src/domain/run/`

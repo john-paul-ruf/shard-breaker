@@ -228,3 +228,7 @@ Pure boss layer composing over S01's volley loop WITHOUT modifying `rules.ts`:
 - S06 note: `createBossCombatState` fails closed when threat density leaves no
   anatomy room above the paddle — S06's threat composition owns reconciling
   boss-room density so composition never trips that guard in production.
+  *(Resolved by S06: `BOSS_ROOM_MAX_DENSITY = 10` caps boss-room formation
+  density in `random/generators.ts`, never loosening the combat-layer guard;
+  S06 also added `layout.test.ts` — context-passthrough and
+  instance-ID-disjointness rows; `bossState.ts` itself was unchanged by S06.)*
