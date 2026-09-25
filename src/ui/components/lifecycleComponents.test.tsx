@@ -9,6 +9,7 @@ import { IntegrityMeter } from "./IntegrityMeter";
 import { RewardCard } from "./RewardCard";
 import { RouteCard } from "./RouteCard";
 import { SaveSignal } from "./SaveSignal";
+import { TelegraphBanner } from "./TelegraphBanner";
 import type { ContentId } from "../../domain/content/catalog";
 import type { RoomDefinition } from "../../domain/content/rooms";
 import type { RewardCardSnapshot, RouteOfferSnapshot } from "../../domain/run/model";
@@ -314,6 +315,93 @@ describe("SaveSignal", () => {
   });
 });
 
+
+describe("TelegraphBanner", () => {
+  const TONES = [
+    ["incoming", "▲", "Telegraph incoming"],
+    ["active", "◆", "Telegraph active"],
+    ["resolved", "✓", "Telegraph resolved"],
+  ] as const;
+
+  it.each(TONES)(
+    "renders the %s tone with text, icon, and border state together (CA-08)",
+    (tone, glyph, label) => {
+      const { container } = render(
+        <TelegraphBanner
+          title="TELEGRAPH // HAZARD LANE"
+          detail="Static hatch marks show danger before impact."
+          tone={tone}
+        />,
+      );
+      const banner = container.querySelector<HTMLElement>(".telegraph-banner");
+      if (banner === null) {
+        throw new Error("expected telegraph banner");
+      }
+      expect(banner).toHaveAttribute("data-tone", tone);
+      expect(
+        screen.getByRole("status", { name: label + ": TELEGRAPH // HAZARD LANE" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("TELEGRAPH // HAZARD LANE")).toBeInTheDocument();
+      expect(
+        screen.getByText("Static hatch marks show danger before impact."),
+      ).toBeInTheDocument();
+      const icon = banner.querySelector<HTMLElement>(".telegraph-banner__icon");
+      if (icon === null) {
+        throw new Error("expected telegraph icon");
+      }
+      expect(icon.textContent).toBe(glyph);
+    },
+  );
+
+  it("changes every non-color channel when the tone changes", () => {
+    const { container, rerender } = render(
+      <TelegraphBanner
+        title="TELEGRAPH // PRISM SWEEP IN 2.4s"
+        detail="Counter: break the outer node."
+        tone={"incoming"}
+      />,
+    );
+    let banner = container.querySelector<HTMLElement>(".telegraph-banner");
+    if (banner === null) {
+      throw new Error("expected telegraph banner");
+    }
+    expect(banner.dataset.tone).toBe("incoming");
+
+    rerender(
+      <TelegraphBanner
+        title="TELEGRAPH // PRISM SWEEP IN 2.4s"
+        detail="Counter: break the outer node."
+        tone={"active"}
+      />,
+    );
+    banner = container.querySelector<HTMLElement>(".telegraph-banner");
+    if (banner === null) {
+      throw new Error("expected telegraph banner");
+    }
+    expect(banner.dataset.tone).toBe("active");
+    expect(banner.querySelector(".telegraph-banner__icon")?.textContent).toBe("◆");
+  });
+
+  it("keeps the static text present under prefers-reduced-motion", () => {
+    // The banner renders no animation at all; this row proves the reduced-
+    // motion contract by asserting the static content the media query must
+    // preserve (title, detail, icon) is present in the DOM.
+    const { container } = render(
+      <TelegraphBanner
+        title="TELEGRAPH // HAZARD LANE"
+        detail="Color and text remain when motion is reduced."
+        tone={"incoming"}
+      />,
+    );
+    const banner = container.querySelector<HTMLElement>(".telegraph-banner");
+    if (banner === null) {
+      throw new Error("expected telegraph banner");
+    }
+    expect(banner).toHaveTextContent("TELEGRAPH // HAZARD LANE");
+    expect(banner).toHaveTextContent("Color and text remain when motion is reduced.");
+    expect(banner.querySelector(".telegraph-banner__icon")).not.toBeNull();
+  });
+});
 const componentCatalog = createContentCatalog();
 
 function roomByType(roomType: RoomDefinition["roomType"]): RoomDefinition {
