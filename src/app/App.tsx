@@ -394,6 +394,10 @@ function createCombatModel(
     hazardIds: roomState.threatProfile.hazardIds,
   };
 
+  const pendingHazard = checkpoint.hazards.find(
+    (hazard) => hazard.state !== "resolved",
+  );
+
   return {
     ok: true,
     model: {
@@ -417,12 +421,20 @@ function createCombatModel(
       ),
       isBusy: state.isBusy,
       saveSignal: state.saveSignal,
-      arena: {
-        roomName: roomDisplayName(catalog, roomState.roomType),
-        skillDisplay,
-        isBusy: state.isBusy,
-      },
-      createInitialState: () => fromCombatCheckpoint(checkpoint, initContext, catalog),
+      telegraph:
+        pendingHazard === undefined
+          ? null
+          : {
+              title: "Telegraph // hazard lane",
+              detail:
+                "Hazard lane pending in this room. Static hatch marks and this text remain when motion is reduced.",
+              tone:
+                pendingHazard.state === "telegraphed"
+                  ? ("incoming" as const)
+                  : ("active" as const),
+            },
+      createInitialState: () =>
+        fromCombatCheckpoint(checkpoint, initContext, catalog),
       resolveVolleyEffects: () =>
         resolveVolleyEffects(
           catalog,

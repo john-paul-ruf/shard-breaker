@@ -7,9 +7,9 @@ import { AppStatusBar } from "../components/AppStatusBar";
 import { IntegrityMeter } from "../components/IntegrityMeter";
 import { SaveSignal } from "../components/SaveSignal";
 import { TelegraphBanner } from "../components/TelegraphBanner";
+import type { TelegraphBannerProps } from "../components/TelegraphBanner";
 import type { SaveSignalView } from "../components/SaveSignal";
 import { Arena } from "../../game/Arena";
-import type { ArenaViewModel } from "../../game/Arena";
 
 /**
  * The combat room's display model. `arena` is the narrow slice the Arena
@@ -40,7 +40,8 @@ export interface CombatScreenViewModel {
   readonly hasClearOutcome: boolean;
   readonly isBusy: boolean;
   readonly saveSignal: SaveSignalView;
-  readonly arena: ArenaViewModel;
+  /** Durable telegraph from the checkpoint's pending hazard; null when none. */
+  readonly telegraph: TelegraphBannerProps | null;
   /** Checkpoint→state reconstruction (CA-03), injected by App.tsx. */
   readonly createInitialState: () => CombatState;
   /** Per-volley effect snapshot provider (production: the S02 resolver). */
@@ -72,11 +73,6 @@ function formatDepth(value: number): string {
  */
 export function CombatScreen({ model, dispatch }: CombatScreenProps) {
   const canAdvance = !model.isBusy && model.hasClearOutcome;
-  const arenaModel: ArenaViewModel = {
-    roomName: model.roomName,
-    skillDisplay: model.skillDisplay,
-    isBusy: model.isBusy,
-  };
 
   return (
     <div className="app-shell">
@@ -124,7 +120,11 @@ export function CombatScreen({ model, dispatch }: CombatScreenProps) {
 
         <div className="combat-grid">
           <Arena
-            model={arenaModel}
+            model={{
+              roomName: model.roomName,
+              skillDisplay: model.skillDisplay,
+              isBusy: model.isBusy,
+            }}
             dispatch={dispatch}
             createInitialState={model.createInitialState}
             resolveVolleyEffects={model.resolveVolleyEffects}
@@ -194,11 +194,13 @@ export function CombatScreen({ model, dispatch }: CombatScreenProps) {
               ) : null}
             </div>
 
-            <TelegraphBanner
-              title="Telegraph // hazard lane"
-              detail="Hatch marks show danger before impact. Color and text remain when motion is reduced."
-              tone="incoming"
-            />
+            {model.telegraph !== null ? (
+              <TelegraphBanner
+                title={model.telegraph.title}
+                detail={model.telegraph.detail}
+                tone={model.telegraph.tone}
+              />
+            ) : null}
           </aside>
         </div>
       </main>

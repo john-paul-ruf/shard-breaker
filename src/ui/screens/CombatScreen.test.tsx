@@ -124,10 +124,10 @@ function baseModel(
     hasClearOutcome: false,
     isBusy: false,
     saveSignal: null,
-    arena: {
-      roomName: "Glassway",
-      skillDisplay: [],
-      isBusy: false,
+    telegraph: {
+      title: "Telegraph // hazard lane",
+      detail: "Hatch marks show danger before impact. Color and text remain when motion is reduced.",
+      tone: "incoming",
     },
     createInitialState: () => createCombatState(catalog, initContext()),
     resolveVolleyEffects: () => NEUTRAL_EFFECTS,
@@ -194,7 +194,7 @@ describe("CombatScreen composition", () => {
     expect(screen.getByRole("img", { name: "3 of 3 Run Integrity" })).toBeInTheDocument();
   });
 
-  it("renders the telegraph banner as DOM text with its tone attribute (CA-08)", () => {
+  it("renders the durable checkpoint telegraph as DOM text with its tone attribute (CA-08)", () => {
     const { container } = render(
       <CombatScreen model={baseModel()} dispatch={vi.fn()} />,
     );
@@ -202,7 +202,16 @@ describe("CombatScreen composition", () => {
     expect(banner).not.toBeNull();
     expect(banner).toHaveAttribute("data-tone", "incoming");
     expect(banner).toHaveTextContent("Telegraph // hazard lane");
-    expect(banner).toHaveTextContent("Color and text remain when motion is reduced.");
+    expect(banner).toHaveTextContent(
+      "Hatch marks show danger before impact. Color and text remain when motion is reduced.",
+    );
+  });
+
+  it("omits the telegraph banner when no hazard is pending", () => {
+    const { container } = render(
+      <CombatScreen model={baseModel({ telegraph: null })} dispatch={vi.fn()} />,
+    );
+    expect(container.querySelector(".telegraph-banner")).toBeNull();
   });
 });
 
