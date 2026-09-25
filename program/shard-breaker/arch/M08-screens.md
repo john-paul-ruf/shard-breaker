@@ -81,6 +81,7 @@
 |------|--------|
 | 2026-08-29 | Added the controlled accessible launch archive and restored-checkpoint composition. |
 | 2026-09-24 | combat-engine SESSION-04: Added CombatScreen, room-combat derivation, App combat model; removed the RoomScreen combat branch and placeholder. |
+| 2026-09-24 | combat-engine SESSION-05: Added BossScreen with room-boss derivation and boss model; BossScreen composes the S04 Arena host. |
 | 2026-08-29 | Imported Genesis M08 and screen design contracts into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-02: Added RouteMapScreen with catalog-resolved display, auto-materialize, radiogroup of RouteCards, commit bar, side panel. |
 
@@ -147,3 +148,33 @@
   placeholder markup, and `RoomScreenViewModel.isBossRoom` deleted with the two
   placeholder test rows); utility-room behavior untouched. 10 CombatScreen tests,
   15 App rows (derivation + composition), RoomScreen 10 (−2 placeholders).
+
+
+<!-- combat-engine SESSION-05 -->
+## Boss screen composition (combat-engine SESSION-05)
+
+- `src/app/navigation.ts` — `ScreenDescriptor` gains `{ id: "room-boss" }`;
+  `deriveScreen` branches boss rooms before the generic combat branch.
+- `src/app/App.tsx` — `createBossModel(state, catalog)` mirrors
+  `createCombatModel`: resolves the routed archetype via `catalog.getBoss`,
+  applies the room's modifier IDs, builds the modifier chips with compatibility
+  text, and injects the two Arena closures (`createInitialState` via
+  `createBossCombatState`, `resolveVolleyEffects` = S02's production resolver);
+  Breach maps to `combat/launch` with the checkpoint's committed aim, gated on
+  the room being unresolved and disabled while busy.
+- `src/ui/screens/BossScreen.tsx` (new) — exports `BossScreenViewModel`,
+  `BossScreenModifierChip`, `BossScreen`: identity card, boss state rows,
+  phase steps with text labels (`01 Lock / 02 Split / 03 Breach`,
+  `data-state` current/done/upcoming), modifier chips with compatibility text
+  (`data-applied`), TelegraphBanner with step-derived countdown text
+  (`TELEGRAPH // PRISM SWEEP IN <n.n>s` + `Counter: …`, `data-tone`
+  pending/active/omitted), boss integrity meter, the S04 Arena host, the Breach
+  action, and the clear-gated `Advance to reward draft`.
+- CA-10 proof at CP3: BossScreen asserts text+label pairs for every
+  telegraph/phase state (reduced-motion keeps static text per S04 CSS policy).
+  CA-07 tension recorded for Planner: Breach is a second `combat/launch`
+  dispatcher at room scope (durable pre-launch first assault only); the arena
+  launch control remains the explicit in-volley launcher.
+- Boss-specific CSS classes (`boss-state`, `boss-state-row`, `phase-steps`,
+  `phase-step`, `modifier-chips`, `modifier-chip`) carry semantic data hooks;
+  styling is an owner correction (B-2) targeting S07's visual pass.

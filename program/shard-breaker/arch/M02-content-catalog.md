@@ -62,6 +62,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-09-24 | combat-engine SESSION-05: Added boss combat content (4 archetypes: phases/telegraphs/counterplay/capped modifiers) and full BossDefinition catalog lookups — see the fragment below. |
 | 2026-08-29 | Imported Genesis M02 contract into the Forge registry. |
 | 2026-08-30 | Added `content-1` route rooms, support IDs, bounded Integrity services, boss routing identities, and total catalog lookups. |
 | 2026-09-15 | room-resolution SESSION-01: Added reward content (8 skills, 8 equipment items, 14 enhancements) and total catalog lookups for all three types. |
@@ -121,3 +122,26 @@
   new ID in the global known-ID set (format/duplicate checked) and rejects at
   construction: skill `maxCharges < 1`, non-integer/negative enhancement
   `minDepth`, and duplicate enhancement `effectKey`s. No existing API changed.
+
+
+<!-- combat-engine SESSION-05 -->
+## Boss content and catalog facade (combat-engine SESSION-05)
+
+- `bosses.ts` — `BossPhaseDefinition { id, displayName, transitionCondition,
+  hpThreshold }` (fraction of max health where the phase begins; ordered strictly
+  descending across the three phases); `BossTelegraphDefinition { id,
+  displayName, counterplay, windowSeconds }`; `BossModifierDefinition { id,
+  displayName, compatibleArchetypeIds: readonly ContentId[] | "any",
+  cappedDescription }`; `BossDefinition extends BossRoutingIdentity` adding
+  `identitySummary`, `counterplay`, `phases` (exactly 3, strictly descending),
+  `telegraphs`, `shieldNodeCount: 1|2|3`, `compatibleModifiers`.
+- `BOSS_DEFINITIONS` — the four archetypes (warden, broodmother, null
+  architect, leech), each with 3 phases, ≥2 telegraphs, 1–3 shield nodes, 2–3
+  capped modifiers (2 shared "any" + 1 archetype-specific, carried by identity).
+  `SHARED_BOSS_MODIFIERS` — the two "any"-compatible definitions.
+  `BOSS_ROUTING_IDENTITIES` unchanged (exactly three fields — CA-09; the
+  committed `rooms.test.ts` keys assertion pins this).
+- `catalog.ts` — `ContentCatalog.listBosses()` / `getBoss(id)` now resolve the
+  full `BossDefinition` (a subtype of `BossRoutingIdentity`, so every routing
+  consumer keeps its shape); catalog registers from `BOSS_DEFINITIONS`. CA-09
+  proof: `generators.test.ts` 21/21 unchanged at CP1.

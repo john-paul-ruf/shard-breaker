@@ -154,6 +154,7 @@ not mutate domain state or call IndexedDB directly.
 
 | Date | Change |
 |------|--------|
+| 2026-09-24 | combat-engine SESSION-05: Added the room-boss screen branch and boss model builder. |
 | 2026-08-29 | Imported deep-file contract into the Forge registry. |
 | 2026-08-29 | Added the serialized durable application store, launch navigation, React binding, and browser composition root. |
 | 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |
@@ -161,3 +162,23 @@ not mutate domain state or call IndexedDB directly.
 | 2026-09-22 | room-resolution SESSION-02: Added room/buy-shop-item, room/commit-recovery, room/resolve, reward/select app commands and store handlers with saveCheckpoint persistence and replacement-disclosure save signal. |
 | 2026-09-22 | room-resolution SESSION-03: Added room/reward screen descriptors (`{ id: "room" }`, `{ id: "reward" }`), App model/render branches for room and reward phases, and the content-facade objective-name read. |
 | 2026-09-22 | Archivist final reconciliation: declared the dual module numbering (deep-file M06 vs registry M06), merged the Change History, repaired the deriveScreen enumeration to all five descriptors, and corrected the SESSION-03 edge record to the mechanically-derived content-rooms import. |
+
+
+<!-- combat-engine SESSION-05 -->
+## Boss screen and room-boss branch (combat-engine SESSION-05)
+
+- `src/app/navigation.ts` — `ScreenDescriptor` gains `{ id: "room-boss" }`;
+  `deriveScreen` branches boss rooms BEFORE the generic combat branch.
+- `src/app/App.tsx` — `createBossModel(state, catalog)`: resolves the routed
+  archetype via `catalog.getBoss`, applies the room's modifier IDs, builds
+  modifier chips with compatibility text, injects the two Arena closures
+  (`createInitialState` = `createBossCombatState` closure; `resolveVolleyEffects`
+  = S02's production resolver). Breach maps to `combat/launch` with the
+  checkpoint's committed aim (durable pre-launch first assault), gated on the
+  room being unresolved, disabled while busy.
+- `src/ui/screens/BossScreen.tsx` (new) — per `mocks/boss.html`: identity card,
+  boss state rows (`data-phase`/`data-current-phase`), phase steps with text
+  labels, modifier chips with compatibility text, TelegraphBanner with
+  step-derived countdown text, boss integrity meter, S04 Arena host, Breach
+  action, clear-gated advance. 14 screen tests + App derivation/composition
+  rows.

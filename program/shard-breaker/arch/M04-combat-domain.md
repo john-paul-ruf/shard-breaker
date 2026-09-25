@@ -62,6 +62,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-09-24 | combat-engine SESSION-05: added bossState.ts (boss phase machine composing over the volley loop; capped modifier application; fail-closed policies) — see the fragment below. |
 | 2026-08-29 | Imported Genesis M04 contract into the Forge registry. |
 | 2026-09-23 | combat-engine SESSION-01: created `src/domain/combat/` (model/layout/rules/results) and extended M01 content with `enemies.ts` + `listEnemies()`/`getEnemy()` — see the fragment below. |
 | 2026-09-23 | combat-engine SESSION-02: added `effects.ts` (build-driven effect resolution) and consumed effects in `rules.ts` hooks — see the fragment below. |
@@ -191,3 +192,39 @@ runtime module edge.
   charge-gated skills with empty params, never invented values. The single
   swap point is `ROLLED_PARAMS_CARRIER_LANDING = []` in `run/reducer.ts` —
   prerequisite owned by S07/CA-13 planning.
+
+
+<!-- combat-engine SESSION-05 -->
+## Boss combat layer (combat-engine SESSION-05)
+
+Pure boss layer composing over S01's volley loop WITHOUT modifying `rules.ts`:
+
+- `BossCombatInitContext extends CombatInitContext` — adds `archetypeId`,
+  `modifierIds`.
+- `createBossCombatState(catalog, context, baseArena?) → BossCombatRuntime` —
+  composes the deterministic S01 volley arena plus the routed anatomy (shield
+  nodes + core as ordinary enemy rows so `stepCombat`'s cascade damages them),
+  plus sweep lanes chained off `<eventKey>:boss-layout`; lanes resolve to
+  authored telegraphs by `hazardId`; instance IDs are chain-positional. Fails
+  closed on unknown archetype, foreign base arena, coverage-cap violation, and
+  anatomy that cannot fit above the paddle.
+- `stepBoss(state, volleyState, steps) → BossCombatRuntime` — advances the
+  volley through `stepCombat` and re-derives the projection; the returned
+  runtime always carries the caller's current volley state. Steps after a
+  volley end are no-ops (S01 exactly-once).
+- `deriveBossProjection(definition, arena) → BossCombatProjection` — phase at
+  authored health thresholds (core row), earliest live telegraph with
+  step-derived countdown (`bossCountdownSeconds`), nodes-broken counter,
+  `defeated` on the standard `clear` outcome.
+- `applyBossModifiers(definition, ids) → { applied, ignored }` — capped effect
+  registry; unknown/incompatible/duplicate/cap-exceeding IDs fail closed with
+  bounded diagnostics (CA-12 mechanics; proofs stay S06-CP2).
+- Caps: `BOSS_TELEGRAPH_MIN_STEPS=120`, `BOSS_SWEEP_MAX_HALF_WIDTH=12`,
+  `BOSS_SWEEP_MAX_COVERAGE=0.45`, `MAX_BOSS_SWEEP_LANES=3`. Durable checkpoints
+  keep `bossState: null` — boss anatomy/sweep lanes/phase progress are
+  arena-ephemeral, recomposed deterministically from the boss-layout stream on
+  loss restore; the boss is defeated only by the volley that clears the room.
+  S06/S07 must not expect boss progress to survive reload mid-room.
+- S06 note: `createBossCombatState` fails closed when threat density leaves no
+  anatomy room above the paddle — S06's threat composition owns reconciling
+  boss-room density so composition never trips that guard in production.
