@@ -1882,3 +1882,60 @@ button:focus-visible,
   letter-spacing: 0.04em;
   text-transform: none;
 }
+
+/* Boss room rail. */
+.boss-state {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.boss-state-row b {
+  color: var(--color-signal-magenta);
+  text-align: right;
+}
+
+.phase-steps {
+  display: flex;
+  gap: var(--space-4);
+  margin-top: var(--space-12);
+  padding: 0;
+  list-style: none;
+}
+
+.phase-step {
+  flex: 1;
+  border-top: 3px solid var(--line-translucent);
+  padding-top: var(--space-4);
+}
+
+.phase-step[data-state="current"] {
+  border-top-color: var(--color-signal-amber);
+}
+
+.phase-step[data-state="done"] {
+  border-top-color: var(--color-signal-magenta);
+}
+
+.phase-step__label {
+  color: var(--color-text-tertiary);
+  font: 700 9px var(--font-mono);
+  text-transform: uppercase;
+}
+
+.modifier-chips {
+  display: grid;
+  gap: var(--space-8);
+  margin-top: var(--space-8);
+  padding: 0;
+  list-style: none;
+}
+
+.modifier-chip {
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--color-signal-violet);
+  border-radius: var(--radius-control);
+}
+
+.modifier-chip[data-applied="true"] b {
+  color: var(--color-signal-violet);
+}
