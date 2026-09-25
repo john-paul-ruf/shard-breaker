@@ -110,12 +110,11 @@ export interface RunLifecycleRepository {
     instruction: SaveCheckpointPersistenceInstruction,
   ): Promise<PersistenceResult<RunState>>;
   /**
-   * CA-14's one-transaction terminal boundary. Optional capability: older
-   * repository fixtures without the member report the typed
-   * `transaction-failed`-class refusal through the result channel — the
-   * store treats an absent implementation as fail-closed, never as success.
+   * CA-14's one-transaction terminal boundary. Required capability. The
+   * store still treats an absent implementation as fail-closed — the
+   * pre-finalization archive stays published — never as success.
    */
-  finalizeDeath?(
+  finalizeDeath(
     instruction: FinalizeDeathPersistenceInstruction,
   ): Promise<PersistenceResult<RunState>>;
 }

@@ -148,6 +148,15 @@ function createMemoryRepository(
         return success({ profile, livingRun });
       },
     ),
+    finalizeDeath: vi.fn<RunLifecycleRepository["finalizeDeath"]>(
+      async () => {
+        if (profile === null) {
+          return failure("profile-missing", "No local profile was found.");
+        }
+        livingRun = null;
+        return success({ profile, livingRun });
+      },
+    ),
   };
 
   return {
