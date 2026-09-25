@@ -26,6 +26,7 @@ import type { AppCommand } from "./commands";
 import type { AppState, AppStore } from "./appStore";
 import { createAppStore } from "./appStore";
 import { deriveScreen } from "./navigation";
+import { createCombatState, toCombatCheckpoint } from "../domain/combat/layout";
 
 afterEach(cleanup);
 
@@ -794,5 +795,141 @@ describe("App room resolution integration", () => {
       expect(store.getSnapshot().livingRun?.phase).toBe("reward"),
     );
     await screen.findByRole("radiogroup", { name: "Three reward cards" });
+  });
+});
+describe("App boss composition", () => {
+  function bossRoomRun(): LivingRun {
+    const livingRun = makeLivingRun();
+    return {
+      ...livingRun,
+      phase: "room",
+      routeState: null,
+      roomState: {
+        roomId: "room-boss-1",
+        roomType: "boss",
+        eventKey: "room-boss-1",
+        status: "ready",
+        objectiveIds: [],
+        threatProfile: {
+          budget: 0,
+          durabilityFactor: 1,
+          density: 0,
+          formationId: "formation-boss-arena" as ContentId,
+          hazardIds: [],
+          bossModifierIds: [],
+        },
+        combatCheckpoint: null,
+        processedOutcomeIds: [],
+        shop: null,
+        recovery: null,
+        boss: {
+          archetypeId: "boss-warden" as ContentId,
+          modifierIds: [],
+          phaseId: "routing",
+          defeated: false,
+        },
+        resolutionCommitId: null,
+      },
+    };
+  }
+
+  it("derives room-boss for a boss room before the generic combat branch", () => {
+    const base = makeLivingRun();
+    const appState: AppState = {
+      loadStatus: "ready",
+      profile: makeProfile(),
+      livingRun: base,
+      selectedClassId: CIRCUIT_ROGUE,
+      launchMode: "checkpoint",
+      isReplacementGuardOpen: false,
+      isBusy: false,
+      saveSignal: null,
+      fatalMessage: null,
+    };
+    expect(deriveScreen({ ...appState, livingRun: bossRoomRun() })).toEqual({
+      id: "room-boss",
+    });
+    const battleRoom: LivingRun = {
+      ...base,
+      phase: "room",
+      routeState: null,
+      roomState: {
+        roomId: "room-battle-1",
+        roomType: "battle",
+        eventKey: "room-battle-1",
+        status: "ready",
+        objectiveIds: [],
+        threatProfile: {
+          budget: 0,
+          durabilityFactor: 1,
+          density: 0,
+          formationId: "formation-glassway-columns" as ContentId,
+          hazardIds: [],
+          bossModifierIds: [],
+        },
+        combatCheckpoint: null,
+        processedOutcomeIds: [],
+        shop: null,
+        recovery: null,
+        boss: null,
+        resolutionCommitId: null,
+      },
+    };
+    expect(deriveScreen({ ...appState, livingRun: battleRoom })).toEqual({
+      id: "room-combat",
+    });
+  });
+
+  it("renders BossScreen with the routed identity, phase steps, telegraph, and Breach control", async () => {
+    const user = userEvent.setup();
+    const livingRun = bossRoomRun();
+    // A real checkpoint from the committed generator contract: the composed
+    // boss arena derives from this room's deterministic context.
+    const roomState = livingRun.roomState!;
+    const checkpoint = toCombatCheckpoint(
+      createCombatState(catalog, {
+        seed: livingRun.seed,
+        contentVersion: livingRun.contentVersion,
+        roomId: roomState.roomId,
+        eventKey: roomState.eventKey,
+        formationId: roomState.threatProfile.formationId,
+        density: 0,
+        durabilityFactor: 1,
+        lossCount: 0,
+        hazardIds: [],
+      }),
+    );
+    const memory = createMemoryRepository({
+      profile: makeProfile(),
+      livingRun: {
+        ...livingRun,
+        roomState: { ...roomState, combatCheckpoint: checkpoint },
+      },
+    });
+    const store = createStore(memory.repository);
+    renderApp(store);
+    await screen.findByRole("heading", { name: "Living run detected" });
+    await user.click(screen.getByRole("button", { name: "Resume living run" }));
+
+    expect(
+      await screen.findByRole("heading", { name: /Warden \/\/ Boss/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("01 / 03 — Lock")).toBeInTheDocument();
+    expect(screen.getByText("Outer node breaks")).toBeInTheDocument();
+    expect(screen.getByText("Prism sweep")).toBeInTheDocument();
+    const phaseSteps = screen.getByLabelText("Boss phases");
+    const stepLabels = within(phaseSteps)
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(stepLabels).toEqual(["01 Lock", "02 Split", "03 Breach"]);
+    expect(screen.getByRole("button", { name: /Breach Warden/ })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Advance to reward draft" }),
+    ).toBeDisabled();
+    expect(screen.getByText("Defeat the boss to open the reward draft.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Combat arena" })).toBeInTheDocument();
+    const banner = document.querySelector(".telegraph-banner");
+    expect(banner).not.toBeNull();
+    expect(banner).toHaveTextContent("TELEGRAPH // PRISM SWEEP IN");
   });
 });

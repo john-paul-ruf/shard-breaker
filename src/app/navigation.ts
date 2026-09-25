@@ -6,6 +6,7 @@ export type ScreenDescriptor =
   | { readonly id: "home"; readonly mode: "checkpoint" }
   | { readonly id: "route-map" }
   | { readonly id: "room" }
+  | { readonly id: "room-boss" }
   | { readonly id: "room-combat" }
   | { readonly id: "reward" };
 
@@ -19,6 +20,7 @@ const CHECKPOINT_SCREEN: ScreenDescriptor = Object.freeze({
 });
 const ROUTE_MAP_SCREEN: ScreenDescriptor = Object.freeze({ id: "route-map" });
 const ROOM_SCREEN: ScreenDescriptor = Object.freeze({ id: "room" });
+const ROOM_BOSS_SCREEN: ScreenDescriptor = Object.freeze({ id: "room-boss" });
 const ROOM_COMBAT_SCREEN: ScreenDescriptor = Object.freeze({
   id: "room-combat",
 });
@@ -47,7 +49,11 @@ export function deriveScreen(state: AppState): ScreenDescriptor {
     if (state.livingRun.phase === "room") {
       const roomState = state.livingRun.roomState;
       if (roomState !== null && isCombatRoomType(roomState.roomType)) {
-        return ROOM_COMBAT_SCREEN;
+        // Boss rooms branch to their own screen before the generic combat
+        // branch: the arena composition is shared, the boss rail is not.
+        return roomState.roomType === "boss"
+          ? ROOM_BOSS_SCREEN
+          : ROOM_COMBAT_SCREEN;
       }
       return ROOM_SCREEN;
     }

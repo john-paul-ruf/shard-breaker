@@ -16,8 +16,12 @@ import type { CombatCheckpoint } from "../domain/run/model";
 import { ROUTE_SUPPORT_DEFINITIONS } from "../domain/content/rooms";
 import { fromCombatCheckpoint } from "../domain/combat/layout";
 import { resolveVolleyEffects } from "../domain/combat/effects";
+import { createBossCombatState } from "../domain/combat/bossState";
+import type { BossCombatRuntime } from "../domain/combat/bossState";
 import { CombatScreen } from "../ui/screens/CombatScreen";
 import type { CombatScreenViewModel } from "../ui/screens/CombatScreen";
+import { BossScreen } from "../ui/screens/BossScreen";
+import type { BossScreenViewModel } from "../ui/screens/BossScreen";
 import { HomeScreen } from "../ui/screens/HomeScreen";
 import type { HomeScreenViewModel } from "../ui/screens/HomeScreen";
 import { RewardsScreen } from "../ui/screens/RewardsScreen";
@@ -89,6 +93,10 @@ type RoomModelResult =
 
 type CombatModelResult =
   | { readonly ok: true; readonly model: CombatScreenViewModel }
+  | { readonly ok: false; readonly message: string };
+
+type BossModelResult =
+  | { readonly ok: true; readonly model: BossScreenViewModel }
   | { readonly ok: false; readonly message: string };
 
 type RewardsModelResult =
@@ -446,6 +454,169 @@ function createCombatModel(
   };
 }
 
+/**
+ * Build the boss room's display model (CAP-09): the routed archetype's
+ * catalog definition resolves the boss anatomy through the deterministic
+ * boss-layout stream, and the room's selected modifier IDs apply through the
+ * fail-closed registry. The Arena's two closures mirror the CombatScreen
+ * contract; the durable checkpoint stays S01's formation snapshot
+ * (`bossState: null`), so the boss runtime recomposes App-side on every
+ * publish and each loss restore re-derives the same anatomy.
+ */
+function createBossModel(
+  state: AppState,
+  catalog: ContentCatalog,
+): BossModelResult {
+  const livingRun = state.livingRun;
+  if (state.loadStatus !== "ready" || livingRun === null) {
+    return {
+      ok: false,
+      message: "The boss room is not available without a living run.",
+    };
+  }
+
+  const classResult = catalog.getClass(livingRun.classId);
+  if (!classResult.ok) {
+    return {
+      ok: false,
+      message: "The saved living run references an unknown class.",
+    };
+  }
+
+  const roomState: RoomState | null = livingRun.roomState;
+  if (roomState === null) {
+    return {
+      ok: false,
+      message: "The saved living run has no committed room to display.",
+    };
+  }
+  if (roomState.roomType !== "boss") {
+    return {
+      ok: false,
+      message: "The boss screen is only available in a boss room.",
+    };
+  }
+  const boss = roomState.boss;
+  if (boss === null) {
+    return {
+      ok: false,
+      message: "The boss room has no routed boss identity to display.",
+    };
+  }
+  const checkpoint = roomState.combatCheckpoint;
+  if (checkpoint === null) {
+    return {
+      ok: false,
+      message: "The boss room has no saved arena state to display.",
+    };
+  }
+
+  const skillDisplay = checkpoint.skillCharges.flatMap((charge) => {
+    const skillResult = catalog.getSkill(charge.skillId);
+    if (!skillResult.ok) {
+      return [];
+    }
+    return [
+      {
+        skillId: charge.skillId,
+        name: skillResult.value.displayName,
+        description: skillResult.value.description,
+        charges: charge.remaining,
+        maximum: charge.maximum,
+      },
+    ];
+  });
+
+  const passiveSummary = livingRun.build.passiveEquipmentIds
+    .map((equipmentId) => {
+      const result = catalog.getEquipment(equipmentId);
+      return result.ok ? result.value.displayName : null;
+    })
+    .filter((name): name is string => name !== null)
+    .join(" · ");
+
+  const initContext = {
+    seed: livingRun.seed,
+    contentVersion: livingRun.contentVersion,
+    roomId: roomState.roomId,
+    eventKey: roomState.eventKey,
+    formationId: roomState.threatProfile.formationId,
+    density: roomState.threatProfile.density,
+    durabilityFactor: roomState.threatProfile.durabilityFactor,
+    lossCount: roomState.processedOutcomeIds.filter((outcomeId) =>
+      outcomeId.startsWith(roomState.eventKey + ":outcome:loss_of_ball:"),
+    ).length,
+    hazardIds: roomState.threatProfile.hazardIds,
+  };
+  const bossInitContext = {
+    ...initContext,
+    archetypeId: boss.archetypeId,
+    modifierIds: boss.modifierIds,
+  };
+
+  let bossRuntime: BossCombatRuntime;
+  try {
+    bossRuntime = createBossCombatState(catalog, bossInitContext);
+  } catch {
+    return {
+      ok: false,
+      message:
+        "The routed boss identity could not be composed for this room's arena.",
+    };
+  }
+
+  const modifierChips = bossRuntime.definition.compatibleModifiers.map(
+    (entry) => ({
+      modifierId: entry.id,
+      displayName: entry.displayName,
+      isApplied: boss.modifierIds.includes(entry.id),
+      cappedDescription: entry.cappedDescription,
+    }),
+  );
+
+  return {
+    ok: true,
+    model: {
+      runId: livingRun.runId,
+      className: classResult.value.displayName,
+      depth: livingRun.depth,
+      cycle: livingRun.cycle,
+      roomType: roomState.roomType,
+      roomName: roomDisplayName(catalog, roomState.roomType),
+      roomSummary: roomSummary(catalog, roomState.roomType),
+      objectiveNames: objectiveNamesFor(roomState),
+      integrityCurrent: livingRun.integrityCurrent,
+      integrityMaximum: livingRun.integrityMax,
+      runCurrency: livingRun.runCurrency,
+      skillDisplay,
+      passiveCount: livingRun.build.passiveEquipmentIds.length,
+      passiveSummary:
+        passiveSummary === "" ? "none equipped yet" : passiveSummary,
+      hasClearOutcome: roomState.processedOutcomeIds.includes(
+        roomState.eventKey + ":outcome:clear:0",
+      ),
+      isBusy: state.isBusy,
+      saveSignal: state.saveSignal,
+      boss: bossRuntime,
+      modifierChips,
+      // Breach begins the room's assault at the checkpoint's committed aim —
+      // the pre-launch snapshot always carries the legal zero aim — while the
+      // arena's own launch control remains the explicit in-volley launcher.
+      breachAim: checkpoint.aimAngle,
+      canBreach: roomState.status !== "resolved",
+      createInitialState: () =>
+        fromCombatCheckpoint(checkpoint, initContext, catalog),
+      resolveVolleyEffects: () =>
+        resolveVolleyEffects(
+          catalog,
+          livingRun.build,
+          [],
+          checkpoint.skillCharges,
+        ),
+    },
+  };
+}
+
 function createRewardsModel(
   state: AppState,
   catalog: ContentCatalog,
@@ -522,6 +693,15 @@ export function App({ store, catalog }: AppProps) {
   }
 
   const screen = deriveScreen(state);
+
+  if (screen.id === "room-boss") {
+    const bossModel = createBossModel(state, catalog);
+    return bossModel.ok ? (
+      <BossScreen model={bossModel.model} dispatch={dispatch} />
+    ) : (
+      <ErrorShell message={bossModel.message} />
+    );
+  }
 
   if (screen.id === "room-combat") {
     const combatModel = createCombatModel(state, catalog);
