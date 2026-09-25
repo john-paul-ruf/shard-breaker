@@ -5,8 +5,13 @@ import type {
   ContentVersion,
 } from "../content/catalog";
 import { CONTENT_VERSION, createContentCatalog } from "../content/catalog";
+import type { LivingRun } from "../run/model";
+import { createInitialLivingRun } from "../run/model";
+import { parseLivingRunRecord } from "../../persistence/validation";
 import type { RoomType } from "../content/rooms";
 import {
+  BOSS_ROOM_MAX_DENSITY,
+  MAX_BOSS_MODIFIERS,
   SHOP_PRICE_CAP,
   THREAT_LIMITS,
   generateRewardDraft,
@@ -146,6 +151,83 @@ function roomContextForOffer(
   offer: GeneratedRouteOffer,
 ): RoomGenerationContext {
   return { ...context, selectedOfferId: offer.offerId };
+}
+
+/**
+ * Materialize the boss room for one seed at a boss depth (must satisfy
+ * depth % 3 === 0; cycle = floor((depth - 1) / 3) + 1 follows).
+ */
+function bossRoomCandidate(
+  seed: string,
+  depth: number,
+): ReturnType<typeof generateRoomCandidate> {
+  const context = routeContext(seed, depth);
+  const offer = generateRouteOptions(catalog, context)[0]!;
+  return generateRoomCandidate(catalog, roomContextForOffer(context, offer));
+}
+
+function classResultFor(run: LivingRun) {
+  const result = catalog.getClass(run.classId);
+  if (!result.ok) {
+    throw new Error("test fixture references an unknown class");
+  }
+  return result.value;
+}
+
+/**
+ * Assemble a valid room-phase living run carrying the generated boss room,
+ * with the class's authored starting integrity so semantic validation passes.
+ */
+function bossRoomRun(room: ReturnType<typeof generateRoomCandidate>): LivingRun {
+  const run = createInitialLivingRun(
+    catalog.contentVersion,
+    catalog.initialClassUnlockIds()[0]!,
+    4,
+    null,
+    {
+      runId: "run-boss-persist",
+      seed: "seed-boss-persist",
+      now: 1_700_000_000_000,
+      commitId: "commit-start",
+    },
+  );
+  const startingIntegrity = classResultFor(run).startingIntegrity;
+  return {
+    ...run,
+    integrityCurrent: startingIntegrity,
+    integrityMax: startingIntegrity,
+    depth: 6,
+    cycle: 2,
+    phase: "room",
+    routeState: null,
+    rewardState: null,
+    roomState: {
+      roomId: room.roomId,
+      roomType: room.roomType,
+      eventKey: room.eventKey,
+      status: room.status,
+      objectiveIds: [...room.objectiveIds],
+      threatProfile: {
+        budget: room.threatProfile.budget,
+        durabilityFactor: room.threatProfile.durabilityFactor,
+        density: room.threatProfile.density,
+        formationId: room.threatProfile.formationId,
+        hazardIds: [...room.threatProfile.hazardIds],
+        bossModifierIds: [...room.threatProfile.bossModifierIds],
+      },
+      combatCheckpoint: room.combatCheckpoint,
+      processedOutcomeIds: [],
+      shop: null,
+      recovery: null,
+      boss: {
+        archetypeId: room.boss!.archetypeId,
+        modifierIds: [...room.boss!.modifierIds],
+        phaseId: room.boss!.phaseId,
+        defeated: room.boss!.defeated,
+      },
+      resolutionCommitId: null,
+    },
+  };
 }
 
 describe("deterministic route generation", () => {
@@ -346,6 +428,21 @@ describe("bounded threat generation", () => {
     }
 
     expect(choices.size).toBe(2);
+  });
+
+  it("caps boss-room density so the composed boss anatomy always fits", () => {
+    for (const depth of [3, 9, Number.MAX_SAFE_INTEGER]) {
+      const profile = generateThreatProfile(
+        catalog,
+        threatContext("boss-density", depth, "boss"),
+      );
+      expect(profile.density).toBeLessThanOrEqual(BOSS_ROOM_MAX_DENSITY);
+      expect(profile.density).toBeGreaterThan(0);
+    }
+    // The cap must bind: an uncapped boss room would exceed it.
+    expect(3 + Math.floor(Math.log2(Number.MAX_SAFE_INTEGER + 1) / 2) + 5 + 1).toBeGreaterThan(
+      BOSS_ROOM_MAX_DENSITY,
+    );
   });
 });
 
@@ -719,5 +816,140 @@ describe("reward draft generation", () => {
     expect(JSON.stringify(generateRewardDraft(catalog, rewardContext("frozen-draft", 1)))).toBe(
       expected,
     );
+  });
+});
+
+describe("boss modifier selection (CA-11)", () => {
+  it("keeps cycle-1 boss rooms at zero modifiers", () => {
+    const room = bossRoomCandidate("cycle-one-empty", 3);
+    expect(room.boss).not.toBeNull();
+    expect(room.boss!.modifierIds).toEqual([]);
+    expect(room.threatProfile.bossModifierIds).toEqual([]);
+  });
+
+  it("selects deterministic compatible modifiers at cycle >= 2", () => {
+    const first = bossRoomCandidate("cycle-two-selection", 6);
+    const second = bossRoomCandidate("cycle-two-selection", 6);
+
+    expect(first.boss).not.toBeNull();
+    expect(first.boss!.modifierIds).toEqual(second.boss!.modifierIds);
+    expect(first.boss!.modifierIds.length).toBeGreaterThanOrEqual(0);
+    expect(first.boss!.modifierIds.length).toBeLessThanOrEqual(
+      MAX_BOSS_MODIFIERS,
+    );
+
+    const routed = catalog.getBoss(first.boss!.archetypeId);
+    expect(routed.ok).toBe(true);
+    if (!routed.ok) return;
+    for (const modifierId of first.boss!.modifierIds) {
+      const compatible = routed.value.compatibleModifiers.some(
+        (entry) => entry.id === modifierId,
+      );
+      expect(compatible).toBe(true);
+    }
+
+    // The threat projection is derived by the same rule for the same room.
+    expect(first.threatProfile.bossModifierIds).toEqual(
+      first.boss!.modifierIds,
+    );
+  });
+
+  it("varies the selection with the stream inputs", () => {
+    const seen = new Set<string>();
+    for (let index = 0; index < 24; index += 1) {
+      const room = bossRoomCandidate(`cycle-two-pool-${String(index)}`, 6);
+      seen.add(JSON.stringify(room.boss!.modifierIds));
+    }
+    // Three compatible modifiers per archetype, two drawn: the shuffle must
+    // produce more than one ordered pair across seeds (order OR membership).
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it("caps the selection at two and only draws archetype-compatible IDs across seeds", () => {
+    const sharedIds = new Set(catalog.listBosses().flatMap((boss) =>
+      boss.compatibleModifiers
+        .filter((entry) => entry.compatibleArchetypeIds === "any")
+        .map((entry) => entry.id),
+    ));
+    for (let index = 0; index < 48; index += 1) {
+      const room = bossRoomCandidate(`compat-pool-${String(index)}`, 6);
+      const boss = room.boss!;
+      expect(boss.modifierIds.length).toBeLessThanOrEqual(MAX_BOSS_MODIFIERS);
+      expect(new Set(boss.modifierIds).size).toBe(boss.modifierIds.length);
+      const routed = catalog.getBoss(boss.archetypeId);
+      expect(routed.ok).toBe(true);
+      if (!routed.ok) continue;
+      for (const modifierId of boss.modifierIds) {
+        expect(
+          routed.value.compatibleModifiers.some(
+            (entry) => entry.id === modifierId,
+          ),
+        ).toBe(true);
+      }
+    }
+    // Every archetype's registry holds the shared pair plus its own entry, so
+    // a compliant selection can never exceed the authored pool.
+    expect(sharedIds.size).toBe(2);
+  });
+
+  it("derives the threat projection from the same stream key as the boss state", () => {
+    // An unrelated draw on a different stream must not move either producer.
+    const context = routeContext("projection-isolation", 6);
+    const offer = generateRouteOptions(catalog, context)[0]!;
+    const expectedBoss = JSON.stringify(
+      generateRoomCandidate(catalog, roomContextForOffer(context, offer)).boss,
+    );
+    const unrelated = deriveStream(
+      context.seed,
+      context.contentVersion,
+      `${offer.roomEventKey}:unrelated-draw`,
+    );
+    Array.from({ length: 64 }, () => unrelated.nextUint32());
+
+    const room = generateRoomCandidate(
+      catalog,
+      roomContextForOffer(context, offer),
+    );
+    expect(JSON.stringify(room.boss)).toBe(expectedBoss);
+    expect(room.threatProfile.bossModifierIds).toEqual(room.boss!.modifierIds);
+  });
+
+  it("emits a boss room whose durable boss shape round-trips persistence", () => {
+    const room = bossRoomCandidate("persistence-roundtrip", 6);
+    const run = bossRoomRun(room);
+
+    const parsed = parseLivingRunRecord(run, catalog);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const persistedBoss = parsed.value.roomState!.boss!;
+    expect(persistedBoss).toEqual({
+      archetypeId: room.boss!.archetypeId,
+      modifierIds: room.boss!.modifierIds,
+      phaseId: "routing",
+      defeated: false,
+    });
+    expect(Object.keys(parsed.value.roomState!.boss!).sort()).toEqual([
+      "archetypeId",
+      "defeated",
+      "modifierIds",
+      "phaseId",
+    ]);
+  });
+
+  it("rejects a boss state that rides display fields the schema does not allow", () => {
+    const room = bossRoomCandidate("persistence-negative", 6);
+    const run = bossRoomRun(room) as unknown as {
+      roomState: { boss: Record<string, unknown> };
+    };
+    run.roomState.boss = {
+      ...run.roomState.boss,
+      displayName: "Warden",
+    };
+
+    const parsed = parseLivingRunRecord(run, catalog);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error.code).toBe("invalid-living-run");
+    expect(JSON.stringify(parsed.error.cause)).toContain("boss");
   });
 });

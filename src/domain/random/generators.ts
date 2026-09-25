@@ -4,6 +4,7 @@ import type {
   ContentId,
   ContentVersion,
 } from "../content/catalog";
+import type { BossDefinition } from "../content/bosses";
 import type { EnhancementDefinition } from "../content/enhancements";
 import type { EquipmentDefinition } from "../content/equipment";
 import type { CombatCheckpoint, EffectParam } from "../run/model";
@@ -98,13 +99,17 @@ export interface GeneratedRecoveryState {
   readonly commitId: null;
 }
 
+/**
+ * The durable boss routing state (CA-11): exactly the four persisted fields of
+ * `RoomState.boss`. `bossStateSchema` (`src/persistence/validation.ts`) is a
+ * strict object, so no display fields may ride along — display identity is
+ * resolved from the catalog through `archetypeId` by the boss screen.
+ */
 export interface GeneratedBossState {
   readonly archetypeId: ContentId;
   readonly modifierIds: readonly ContentId[];
   readonly phaseId: "routing";
   readonly defeated: false;
-  readonly displayName: string;
-  readonly identityLabel: string;
 }
 
 export interface RoomGenerationContext extends RouteGenerationContext {
@@ -171,6 +176,23 @@ export const THREAT_LIMITS = Object.freeze({
   maxDensity: 12,
   maxHazards: 2,
 });
+
+/**
+ * Boss rooms cap formation density so S05's composed anatomy (shield nodes
+ * plus core below the formation) always fits above the paddle: the anatomy
+ * guard in `createBossCombatState` fails closed once the core row crosses the
+ * paddle zone, which happens exactly at three formation rows — reachable at
+ * density 11+ (five columns). At density ≤ 10 the arena holds at most two
+ * rows, and the composed core bottom (y 84) stays above the guard line
+ * (y 86) for every authored durability. Threat-composition property, so it
+ * lives beside the other caps; S05's combat layer is never loosened.
+ */
+export const BOSS_ROOM_MAX_DENSITY = 10;
+
+/** Hard cap on boss modifiers per room (CA-11: at most 2). */
+export const MAX_BOSS_MODIFIERS = 2;
+
+const NO_BOSS_MODIFIERS: readonly ContentId[] = Object.freeze([]);
 
 export const SHOP_PRICE_CAP = 96;
 
@@ -349,6 +371,74 @@ export function generateRouteOptions(
 const roundToThousandth = (value: number): number =>
   Math.round(value * 1_000) / 1_000;
 
+/**
+ * The routed boss identity for one boss room: the sorted routing list drawn
+ * through the `<roomEventKey>:boss-identity` stream. Shared by the boss-state
+ * producer and the threat-profile projection so both name the same archetype.
+ */
+function routedBossIdentity(
+  catalog: ContentCatalog,
+  context: BaseGenerationContext & { readonly roomEventKey: EventKey },
+): BossDefinition {
+  const bosses = [...catalog.listBosses()].sort((left, right) =>
+    compareIds(left.id, right.id),
+  );
+  if (bosses.length === 0) {
+    throw new Error("catalog has no boss routing identities");
+  }
+  const rng = deriveStream(
+    context.seed,
+    context.contentVersion,
+    `${context.roomEventKey}:boss-identity`,
+  );
+  return rng.pick(bosses);
+}
+
+/** Modifier IDs compatible with the archetype, in authored registry order. */
+function compatibleModifierIdsFor(
+  catalog: ContentCatalog,
+  archetypeId: ContentId,
+): readonly ContentId[] {
+  const bossResult = catalog.getBoss(archetypeId);
+  if (!bossResult.ok) {
+    return NO_BOSS_MODIFIERS;
+  }
+  const compatible = bossResult.value.compatibleModifiers.filter(
+    (modifier) =>
+      modifier.compatibleArchetypeIds === "any" ||
+      modifier.compatibleArchetypeIds.includes(archetypeId),
+  );
+  return Object.freeze(compatible.map((entry) => entry.id));
+}
+
+/**
+ * The seeded modifier selection rule (CA-11): boss rooms at cycle >= 2 carry
+ * at most `MAX_BOSS_MODIFIERS` archetype-compatible modifier IDs, shuffled
+ * from the `<roomEventKey>:boss-modifiers` stream. Cycle-1 rooms select none.
+ * `boss.modifierIds` (emitted with the room candidate) is the authoritative
+ * carrier; `threatProfile.bossModifierIds` is the display projection derived
+ * by this same rule so both producers agree.
+ */
+function selectBossModifierIds(
+  catalog: ContentCatalog,
+  context: BaseGenerationContext & { readonly roomEventKey: EventKey },
+  archetypeId: ContentId,
+): readonly ContentId[] {
+  if (context.cycle < 2) {
+    return NO_BOSS_MODIFIERS;
+  }
+  const rng = deriveStream(
+    context.seed,
+    context.contentVersion,
+    `${context.roomEventKey}:boss-modifiers`,
+  );
+  return Object.freeze(
+    rng
+      .shuffle(compatibleModifierIdsFor(catalog, archetypeId))
+      .slice(0, MAX_BOSS_MODIFIERS),
+  );
+}
+
 /** Generate bounded threat data without importing or mutating run state. */
 export function generateThreatProfile(
   catalog: ContentCatalog,
@@ -390,7 +480,9 @@ export function generateThreatProfile(
   const density = isUtility
     ? 0
     : Math.min(
-        THREAT_LIMITS.maxDensity,
+        room.roomType === "boss"
+          ? BOSS_ROOM_MAX_DENSITY
+          : THREAT_LIMITS.maxDensity,
         3 +
           Math.floor(depthFactor / 2) +
           room.baseRiskTier +
@@ -408,6 +500,14 @@ export function generateThreatProfile(
   const hazardIds = Object.freeze(
     [...rng.shuffle(hazardPool).slice(0, hazardCount)],
   );
+  const bossModifierIds =
+    room.roomType === "boss"
+      ? selectBossModifierIds(
+          catalog,
+          context,
+          routedBossIdentity(catalog, context).id,
+        )
+      : NO_BOSS_MODIFIERS;
   const diagnostics = Object.freeze({
     depthFactor: roundToThousandth(depthFactor),
     cycleFactor: roundToThousandth(cycleFactor),
@@ -421,7 +521,7 @@ export function generateThreatProfile(
     density,
     formationId: room.formationId,
     hazardIds,
-    bossModifierIds: Object.freeze([]),
+    bossModifierIds,
     diagnostics,
   });
 }
@@ -470,30 +570,22 @@ export function generateShopInventory(
   );
 }
 
+/**
+ * Compose the durable boss routing state: the streamed identity plus, at
+ * cycle >= 2, the seeded compatible modifier selection (CA-11). The emitted
+ * object stays exactly the four persisted fields.
+ */
 function generateBossState(
   catalog: ContentCatalog,
   context: BaseGenerationContext & { readonly roomEventKey: EventKey },
 ): GeneratedBossState {
-  const bosses = [...catalog.listBosses()].sort((left, right) =>
-    compareIds(left.id, right.id),
-  );
-  if (bosses.length === 0) {
-    throw new Error("catalog has no boss routing identities");
-  }
-  const rng = deriveStream(
-    context.seed,
-    context.contentVersion,
-    `${context.roomEventKey}:boss-identity`,
-  );
-  const identity = rng.pick(bosses);
+  const identity = routedBossIdentity(catalog, context);
 
   return Object.freeze({
     archetypeId: identity.id,
-    modifierIds: Object.freeze([]),
+    modifierIds: selectBossModifierIds(catalog, context, identity.id),
     phaseId: "routing",
     defeated: false,
-    displayName: identity.displayName,
-    identityLabel: identity.identityLabel,
   });
 }
 
