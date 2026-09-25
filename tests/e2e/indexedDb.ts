@@ -3,6 +3,20 @@ import type { Page } from "@playwright/test";
 const DATABASE_NAME = "shardbreak";
 const OPERATION_TIMEOUT_MS = 4_000;
 
+export interface StoredRunSummaryRecord {
+  readonly runId: string;
+  readonly classId: string;
+  readonly reachedDepth: number;
+  readonly bossesReached: number;
+  readonly bossesDefeated: number;
+  readonly activeSkillIds: readonly string[];
+  readonly passiveEquipmentIds: readonly string[];
+  readonly carryOverRelicId: string | null;
+  readonly shardsEarned: number;
+  readonly terminalReason: "death" | "completion" | "abandoned";
+  readonly completedAt: number;
+}
+
 export interface StoredProfileRecord {
   readonly recordKey: "current";
   readonly profileId: string;
@@ -19,6 +33,8 @@ export interface StoredProfileRecord {
     readonly highestBossDepth: number;
     readonly bossesDefeated: number;
   };
+  readonly lastRunSummary: StoredRunSummaryRecord | null;
+  readonly lastFinalizedRunId: string | null;
 }
 
 export interface StoredLivingRunRecord {
@@ -56,7 +72,7 @@ export interface StoredLivingRunRecord {
       readonly bossModifierIds: readonly unknown[];
     } | null;
     readonly combatCheckpoint: unknown | null;
-    readonly processedOutcomeIds: readonly unknown[];
+    readonly processedOutcomeIds: readonly string[];
     readonly shop: unknown | null;
     readonly recovery: unknown | null;
     readonly boss: unknown | null;

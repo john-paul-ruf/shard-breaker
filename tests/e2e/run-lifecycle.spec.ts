@@ -101,6 +101,14 @@ async function startCircuitRogue(page: Page): Promise<StoredLivingRunRecord> {
 }
 
 async function returnToArchive(page: Page): Promise<void> {
+  // The store drops every command while a durable save is in flight
+  // (serialized-command contract), so a click during the auto-materialize
+  // window is silently discarded. Wait for the busy window to close first.
+  await expect
+    .poll(async () =>
+      page.locator('[aria-busy="true"]').count(),
+    )
+    .toBe(0);
   await page
     .getByRole("button", { name: "Return to archive" })
     .click();
@@ -783,5 +791,188 @@ test.describe("room resolution", () => {
         .map((card) => card.baseRewardId)
         .includes(appliedBaseIds[0] ?? ""),
     ).toBe(true);
+  });
+});
+test.describe("combat rooms", () => {
+  /** Commit the depth-1 battle card and land on the CombatScreen. */
+  async function commitBattleRoom(appPage: Page): Promise<void> {
+    const routeGroup = appPage.getByRole("radiogroup", {
+      name: "Room route choices",
+    });
+    await expect(routeGroup.getByRole("radio")).toHaveCount(4);
+    const card = routeGroup.getByRole("radio", { name: "battle // Glassway" });
+    await card.click();
+    await expect(card).toHaveAttribute("aria-checked", "true");
+    await appPage.getByRole("button", { name: "Enter selected room" }).click();
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.livingRun?.phase;
+      })
+      .toBe("room");
+    await expect(
+      appPage.getByRole("heading", { name: /Glassway \/\/ Battle/ }),
+    ).toBeVisible();
+  }
+
+  /**
+   * One explicit launch through the real bridge: pointer aims, the launch
+   * control dispatches combat/launch, and the arena session runs the volley
+   * to its deterministic loss.
+   */
+  async function launchOneVolley(appPage: Page): Promise<void> {
+    // After a loss the arena re-enables the launch control while the ended
+    // volley is still mounted; the restored checkpoint publish flips the
+    // status line back to "Aim ready". Waiting for it makes the next
+    // launch deterministic instead of racing the reconcile.
+    await expect
+      .poll(async () => {
+        const status = appPage.locator(".arena-status");
+        return (await status.getAttribute("data-status")) ?? "";
+      })
+      .toBe("aim-ready");
+    const canvas = appPage.getByRole("img", { name: /Glassway arena/ });
+    await canvas.hover({ position: { x: 300, y: 300 } });
+    const launch = appPage.getByRole("button", { name: /Launch ball/ });
+    await expect(launch).toBeEnabled();
+    await launch.click();
+    // The room flips to in_progress on the durable launch commit.
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.livingRun?.roomState?.status;
+      })
+      .toBe("in_progress");
+  }
+
+  /** Wait until the room's loss ledger has recorded exactly the given count. */
+  async function waitForLossLedger(appPage: Page, count: number): Promise<void> {
+    await expect
+      .poll(
+        async () => {
+          const state = await readShardbreakState(appPage);
+          return (
+            state.livingRun?.roomState?.processedOutcomeIds.filter((outcomeId) =>
+              outcomeId.includes(":outcome:loss_of_ball:"),
+            ).length ?? 0
+          );
+        },
+        { timeout: 20_000 },
+      )
+      .toBe(count);
+  }
+
+  test("loss checkpoint: one explicit launch decrements integrity once and reload restores the durable checkpoint", async ({
+    appPage,
+  }) => {
+    await startCircuitRogue(appPage);
+    await commitBattleRoom(appPage);
+
+    const ready = requireLivingRun(await readShardbreakState(appPage));
+    expect(ready.integrityCurrent).toBe(3);
+    expect(ready.roomState?.combatCheckpoint).toMatchObject({
+      kind: "pre_launch",
+    });
+
+    await launchOneVolley(appPage);
+    await waitForLossLedger(appPage, 1);
+
+    // CA-04/CA-15: the loss committed exactly one decrement and the room
+    // carries the loss-kind durable checkpoint for the next assault.
+    const afterLoss = requireLivingRun(await readShardbreakState(appPage));
+    expect(afterLoss.integrityCurrent).toBe(2);
+    expect(afterLoss.roomState?.status).toBe("in_progress");
+    expect(afterLoss.roomState?.combatCheckpoint).toMatchObject({
+      kind: "loss_of_ball",
+    });
+    expect(afterLoss.roomState?.processedOutcomeIds).toEqual([
+      expect.stringContaining(":outcome:loss_of_ball:0"),
+    ]);
+
+    // CA-15: reload + resume reconstructs the run from IndexedDB — the same
+    // checkpoint, no fabricated live volley, integrity decremented once only.
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: /Glassway \/\/ Battle/ }),
+    ).toBeVisible();
+    const resumed = requireLivingRun(await readShardbreakState(appPage));
+    expect(resumed.integrityCurrent).toBe(2);
+    expect(resumed.roomState?.combatCheckpoint).toEqual(
+      afterLoss.roomState?.combatCheckpoint,
+    );
+    expect(resumed.roomState?.processedOutcomeIds).toEqual(
+      afterLoss.roomState?.processedOutcomeIds,
+    );
+    expect(resumed.roomState?.status).toBe("in_progress");
+    await expect(appPage.getByRole("button", { name: /Launch ball/ })).toBeEnabled();
+  });
+
+  test("death journey: reload-checkpoint losses finalize the run into the terminal summary", async ({
+    appPage,
+  }) => {
+    await startCircuitRogue(appPage);
+    await commitBattleRoom(appPage);
+
+    // CA-15's journey contract: each loss is followed by reload + resume so
+    // every checkpoint crosses the durable reconstruction boundary.
+    await launchOneVolley(appPage);
+    await waitForLossLedger(appPage, 1);
+    const atTwo = requireLivingRun(await readShardbreakState(appPage));
+    expect(atTwo.integrityCurrent).toBe(2);
+
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: /Glassway \/\/ Battle/ }),
+    ).toBeVisible();
+
+    await launchOneVolley(appPage);
+    await waitForLossLedger(appPage, 2);
+    const atOne = requireLivingRun(await readShardbreakState(appPage));
+    expect(atOne.integrityCurrent).toBe(1);
+
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: /Glassway \/\/ Battle/ }),
+    ).toBeVisible();
+
+    // The final assault: the third loss crosses CA-14's death boundary.
+    await launchOneVolley(appPage);
+    await expect
+      .poll(
+        async () => {
+          const state = await readShardbreakState(appPage);
+          return state.livingRunKeys.length;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(0);
+
+    // IndexedDB truth: no living run; the profile carries the terminal
+    // summary, the committed floor-entry record, and the finalization ID.
+    const state = await readShardbreakState(appPage);
+    const profile = requireProfile(state);
+    expect(profile.lastRunSummary?.terminalReason).toBe("death");
+    expect(profile.lastRunSummary?.runId).toBe(atOne.runId);
+    expect(profile.lastRunSummary?.classId).toBe("class-circuit-rogue");
+    expect(profile.lastRunSummary?.reachedDepth).toBe(1);
+    expect(profile.lastRunSummary?.shardsEarned).toBe(0);
+    expect(profile.lastRunSummary?.completedAt).toBeGreaterThan(0);
+    expect(profile.records.highestReachedDepth).toBe(1);
+    expect(profile.lastFinalizedRunId).toBe(atOne.runId);
+    expect(state.livingRun).toBeUndefined();
+
+    // CA-15: reload shows the archive with no living run and the recorded
+    // summary surfaced through the existing profile display.
+    await appPage.reload();
+    await expect(
+      appPage.getByRole("heading", { name: "Choose your signal." }),
+    ).toBeVisible();
+    const reloaded = await readShardbreakState(appPage);
+    expect(reloaded.livingRunKeys).toEqual([]);
+    expect(reloaded.profile?.lastRunSummary?.terminalReason).toBe("death");
+    await expect(appPage.getByText(/Depth 01 · local only/)).toBeVisible();
   });
 });
