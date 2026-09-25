@@ -53,14 +53,16 @@ export interface BossScreenViewModel {
   readonly hasClearOutcome: boolean;
   readonly isBusy: boolean;
   readonly saveSignal: SaveSignalView;
-  /** Catalog-resolved archetype for the routed `roomState.boss.archetypeId`. */
+  /** Catalog-resolved archetype runtime for the routed identity. */
   readonly boss: BossCombatRuntime;
   /** Compatible modifiers for the archetype with per-room application state. */
   readonly modifierChips: readonly BossScreenModifierChip[];
-  /** The room's committed aim when Breach begins the first assault; null after. */
+  /** The checkpoint's committed aim Breach launches with; null when unavailable. */
   readonly breachAim: number | null;
   readonly canBreach: boolean;
+  /** Checkpoint→state reconstruction (CA-03), injected by App.tsx. */
   readonly createInitialState: () => CombatState;
+  /** Per-volley effect snapshot provider (production: the S02 resolver). */
   readonly resolveVolleyEffects: () => EffectSnapshot;
 }
 
@@ -83,18 +85,19 @@ function formatDepth(value: number): string {
 }
 
 /**
- * Boss room screen (mocks/boss.html): the boss identity card and arena at
- * left, the decision rail — phase state rows, phase steps with text labels,
- * integrity, modifier chips, telegraph, and the clear-gated advance action —
- * at right. Every state is text + border + label; nothing is color-only
- * (CA-08 boss share), and every telegraph is DOM content with a step-derived
- * countdown (CA-10).
+ * Boss room screen (mocks/boss.html): the arena panel at left and the boss
+ * rail — identity counterplay, phase state rows, phase steps with text
+ * labels, boss integrity, modifier chips, telegraph, and the Breach /
+ * advance actions — at right. Every state is text + border + glyph/data
+ * attribute, never color alone (CA-08 boss share); every telegraph is DOM
+ * content with a step-derived countdown (CA-10).
  */
 export function BossScreen({ model, dispatch }: BossScreenProps) {
   const canAdvance = !model.isBusy && model.hasClearOutcome;
   const projection = model.boss.projection;
   const telegraph = projection.telegraph;
-  const breachEnabled = model.canBreach && !model.isBusy && model.breachAim !== null;
+  const breachEnabled =
+    model.canBreach && !model.isBusy && model.breachAim !== null;
 
   const telegraphBanner: TelegraphBannerProps | null =
     telegraph === null
@@ -172,37 +175,37 @@ export function BossScreen({ model, dispatch }: BossScreenProps) {
               <p className="signal-eyebrow" data-tone="warning">
                 Boss identity
               </p>
-              <h2>{model.boss.definition.displayName} — pattern lock.</h2>
+              <h2>Pattern lock.</h2>
               <p className="side-panel__skillnote">
                 {model.boss.definition.counterplay}
               </p>
-              <dl
-                className="side-panel__passive boss-state-rows"
-                aria-label="Boss state"
-              >
-                <div className="boss-state-row">
-                  <dt>Phase</dt>
-                  <dd data-phase={projection.phaseId}>
+              <div className="boss-state" aria-label="Boss state">
+                <p
+                  className="side-panel__passive boss-state-row"
+                  data-phase={projection.phaseId}
+                >
+                  <span>Phase</span>
+                  <b>
                     {formatDepth(projection.phaseIndex + 1)} /{" "}
                     {formatDepth(model.boss.definition.phases.length)} —{" "}
                     {projection.phaseDisplayName}
-                  </dd>
-                </div>
-                <div className="boss-state-row">
-                  <dt>Transition</dt>
-                  <dd>{projection.transitionCondition}</dd>
-                </div>
-                <div className="boss-state-row">
-                  <dt>High-impact attack</dt>
-                  <dd>
+                  </b>
+                </p>
+                <p className="side-panel__passive boss-state-row">
+                  <span>Transition</span>
+                  <b>{projection.transitionCondition}</b>
+                </p>
+                <p className="side-panel__passive boss-state-row">
+                  <span>High-impact attack</span>
+                  <b>
                     {telegraph === null
                       ? model.boss.definition.telegraphs
                           .map((entry) => entry.displayName)
                           .join(" · ")
                       : telegraph.displayName}
-                  </dd>
-                </div>
-              </dl>
+                  </b>
+                </p>
+              </div>
               <ol
                 className="phase-steps"
                 aria-label="Boss phases"
@@ -241,7 +244,10 @@ export function BossScreen({ model, dispatch }: BossScreenProps) {
                 Cycle modifiers
               </p>
               {model.modifierChips.length > 0 ? (
-                <ul className="modifier-chips" aria-label="Cycle modifiers">
+                <ul
+                  className="modifier-chips"
+                  aria-label="Cycle modifiers"
+                >
                   {model.modifierChips.map((chip) => (
                     <li
                       key={chip.modifierId}
@@ -249,8 +255,8 @@ export function BossScreen({ model, dispatch }: BossScreenProps) {
                       data-applied={chip.isApplied ? "true" : "false"}
                     >
                       <b>
-                        {chip.displayName}
-                        {chip.isApplied ? " · applied" : " · compatible"}
+                        {chip.displayName} ·{" "}
+                        {chip.isApplied ? "applied" : "compatible"}
                       </b>
                       <span>{chip.cappedDescription}</span>
                     </li>
