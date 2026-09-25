@@ -8,9 +8,11 @@ import { createCombatState } from "./layout";
 import type { CombatState } from "./model";
 import { launchBall, movePaddle, stepCombat } from "./rules";
 import {
+  BOSS_SWEEP_HALF_WIDTH_BASE,
   BOSS_SWEEP_MAX_COVERAGE,
   BOSS_SWEEP_MAX_HALF_WIDTH,
   BOSS_TELEGRAPH_MIN_STEPS,
+  WIDENED_SWEEP_WIDTH_FACTOR,
   applyBossModifiers,
   bossCoreIdFor,
   bossCountdownSeconds,
@@ -346,5 +348,157 @@ describe("boss volley integration", () => {
         `${EVENT_KEY}:boss:node:${String(index)}`,
       );
     }
+  });
+});
+
+describe("boss modifier application through composition (CA-12)", () => {
+  it("renders each archetype's authored modifier as an observable arena effect", () => {
+    // Warden: widened sweep widens every lane to the width cap.
+    const warden = createBossCombatState(
+      catalog,
+      initContext({ modifierIds: [asContentId("boss-modifier-widened-sweep")] }),
+    );
+    expect(warden.appliedModifiers.map((entry) => entry.modifierId)).toEqual([
+      "boss-modifier-widened-sweep",
+    ]);
+    const widenedHalfWidth = Math.min(
+      BOSS_SWEEP_MAX_HALF_WIDTH,
+      Math.round(BOSS_SWEEP_HALF_WIDTH_BASE * WIDENED_SWEEP_WIDTH_FACTOR),
+    );
+    expect(
+      warden.arena.hazards.every((hazard) => hazard.halfWidth === widenedHalfWidth),
+    ).toBe(true);
+
+    // Broodmother: twin brood adds one lane inside the cap.
+    const broodmother = createBossCombatState(
+      catalog,
+      initContext({
+        archetypeId: asContentId("boss-broodmother"),
+        modifierIds: [asContentId("boss-modifier-twin-brood")],
+      }),
+    );
+    expect(broodmother.arena.hazards).toHaveLength(3);
+
+    // Null Architect: denied band adds one lane inside the cap.
+    const architect = createBossCombatState(
+      catalog,
+      initContext({
+        archetypeId: asContentId("boss-null-architect"),
+        modifierIds: [asContentId("boss-modifier-denied-band")],
+      }),
+    );
+    expect(architect.arena.hazards).toHaveLength(3);
+
+    // Leech: siphon lane widens like the warden's sweep.
+    const leech = createBossCombatState(
+      catalog,
+      initContext({
+        archetypeId: asContentId("boss-leech"),
+        modifierIds: [asContentId("boss-modifier-siphon-lane")],
+      }),
+    );
+    expect(leech.appliedModifiers.map((entry) => entry.modifierId)).toEqual([
+      "boss-modifier-siphon-lane",
+    ]);
+    expect(
+      leech.arena.hazards.every((hazard) => hazard.halfWidth === widenedHalfWidth),
+    ).toBe(true);
+  });
+
+  it("shortens telegraph windows within the bounded floor (arc saturation)", () => {
+    const plain = createBossCombatState(catalog, initContext());
+    const saturated = createBossCombatState(
+      catalog,
+      initContext({ modifierIds: [asContentId("boss-modifier-arc-saturation")] }),
+    );
+    const plainFirst = plain.arena.hazards[0]!;
+    const saturatedFirst = saturated.arena.hazards[0]!;
+    expect(saturatedFirst.remainingSteps).toBeLessThan(plainFirst.remainingSteps);
+    expect(saturatedFirst.remainingSteps).toBeGreaterThanOrEqual(
+      BOSS_TELEGRAPH_MIN_STEPS,
+    );
+  });
+
+  it("ignores unknown, incompatible, and duplicated IDs through composition without throwing", () => {
+    const runtime = createBossCombatState(
+      catalog,
+      initContext({
+        modifierIds: [
+          asContentId("boss-modifier-unknown"),
+          asContentId("boss-modifier-twin-brood"),
+          asContentId("boss-modifier-split-lane"),
+          asContentId("boss-modifier-split-lane"),
+        ],
+      }),
+    );
+    expect(runtime.ignoredModifiers).toEqual([
+      { modifierId: "boss-modifier-unknown", reason: "unknown-modifier" },
+      {
+        modifierId: "boss-modifier-twin-brood",
+        reason: "incompatible-with-archetype",
+      },
+      { modifierId: "boss-modifier-split-lane", reason: "duplicate-modifier" },
+    ]);
+    expect(runtime.appliedModifiers.map((entry) => entry.modifierId)).toEqual([
+      "boss-modifier-split-lane",
+    ]);
+    // The surviving modifier still shaped the arena.
+    expect(runtime.arena.hazards).toHaveLength(3);
+  });
+
+  it("honors the sweep-lane cap through composition", () => {
+    const runtime = createBossCombatState(
+      catalog,
+      initContext({
+        archetypeId: asContentId("boss-broodmother"),
+        modifierIds: [
+          asContentId("boss-modifier-split-lane"),
+          asContentId("boss-modifier-twin-brood"),
+        ],
+      }),
+    );
+    expect(runtime.arena.hazards).toHaveLength(3);
+    expect(runtime.ignoredModifiers).toEqual([
+      { modifierId: "boss-modifier-twin-brood", reason: "modifier-cap-reached" },
+    ]);
+  });
+
+  it("keeps the volley simulable on a modifier-composed arena", () => {
+    const runtime = createBossCombatState(
+      catalog,
+      initContext({ modifierIds: [asContentId("boss-modifier-arc-saturation")] }),
+    );
+    const stepped = stepBoss(runtime, liveArena(runtime.arena), 30);
+    expect(stepped.arena.step).toBe(30);
+    expect(stepped.arena.phase).toBe("live");
+    expect(stepped.projection.telegraph).not.toBeNull();
+  });
+
+  it("treats stored modifier IDs as untrusted data (fail closed, never throw)", () => {
+    // A stored/imported payload may hold unknown, stale, or repeated IDs.
+    const storedIds = [
+      "boss-modifier-arc-saturation",
+      "boss-modifier-stale-from-storage",
+      "boss-modifier-split-lane",
+      "boss-modifier-arc-saturation",
+    ].map(asContentId);
+    const runtime = createBossCombatState(
+      catalog,
+      initContext({ modifierIds: storedIds }),
+    );
+    expect(runtime.appliedModifiers.map((entry) => entry.modifierId)).toEqual([
+      "boss-modifier-arc-saturation",
+      "boss-modifier-split-lane",
+    ]);
+    expect(runtime.ignoredModifiers).toEqual([
+      {
+        modifierId: "boss-modifier-stale-from-storage",
+        reason: "unknown-modifier",
+      },
+      {
+        modifierId: "boss-modifier-arc-saturation",
+        reason: "duplicate-modifier",
+      },
+    ]);
   });
 });
