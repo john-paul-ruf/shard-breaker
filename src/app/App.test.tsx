@@ -249,7 +249,7 @@ describe("deriveScreen", () => {
     });
   });
 
-  it("derives checkpoint for a living run in room phase checkpoint mode", () => {
+  it("derives room-combat for a combat room in room phase checkpoint mode", () => {
     const livingRun = makeLivingRun();
     const roomRun: LivingRun = {
       ...livingRun,
@@ -266,6 +266,38 @@ describe("deriveScreen", () => {
           durabilityFactor: 1,
           density: 0,
           formationId: "formation-glassway-columns" as ContentId,
+          hazardIds: [],
+          bossModifierIds: [],
+        },
+        combatCheckpoint: null,
+        processedOutcomeIds: [],
+        shop: null,
+        recovery: null,
+        boss: null,
+        resolutionCommitId: null,
+      },
+    };
+    expect(deriveScreen(state({ launchMode: "checkpoint", livingRun: roomRun })))
+      .toEqual({ id: "room-combat" });
+  });
+
+  it("derives room for a utility room in room phase checkpoint mode", () => {
+    const livingRun = makeLivingRun();
+    const roomRun: LivingRun = {
+      ...livingRun,
+      phase: "room",
+      routeState: null,
+      roomState: {
+        roomId: "room-2",
+        roomType: "shop",
+        eventKey: "room-2",
+        status: "ready",
+        objectiveIds: [],
+        threatProfile: {
+          budget: 0,
+          durabilityFactor: 1,
+          density: 0,
+          formationId: "formation-utility-clear" as ContentId,
           hazardIds: [],
           bossModifierIds: [],
         },
@@ -583,6 +615,49 @@ describe("App integration", () => {
     expect(snapshot.livingRun?.roomState).not.toBeNull();
     expect(snapshot.livingRun?.roomState?.status).toBe("ready");
     expect(memory.repository.saveCheckpoint).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("App combat composition", () => {
+  it("renders CombatScreen with arena controls for a committed battle room", async () => {
+    const user = userEvent.setup();
+    const memory = createMemoryRepository({
+      profile: makeProfile(),
+      livingRun: null,
+    });
+    const store = createStore(memory.repository, [
+      "run-combat",
+      "commit-combat-start",
+    ]);
+    render(<App store={store} catalog={catalog} />);
+    await screen.findByRole("heading", { name: "Choose your signal." });
+
+    await user.click(screen.getByRole("button", { name: "Start new run" }));
+    await screen.findByRole("heading", {
+      name: "Pick the next pressure point.",
+    });
+    await waitFor(
+      () =>
+        expect(store.getSnapshot().livingRun?.routeState?.offers).toHaveLength(4),
+      { timeout: 5000 },
+    );
+
+    await user.click(screen.getByRole("radio", { name: "battle // Glassway" }));
+    await user.click(screen.getByRole("button", { name: "Enter selected room" }));
+    await waitFor(() =>
+      expect(store.getSnapshot().livingRun?.phase).toBe("room"),
+    );
+
+    // The combat branch renders the arena screen, not the utility placeholder.
+    expect(
+      await screen.findByRole("heading", { name: /Glassway \/\/ Battle/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Combat arena" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Launch ball/ })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Advance to reward draft" }),
+    ).toBeDisabled();
+    expect(screen.getByText("Clear the Glassway")).toBeInTheDocument();
   });
 });
 

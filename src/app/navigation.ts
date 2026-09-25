@@ -1,10 +1,12 @@
 import type { AppState } from "./appStore";
+import type { RoomType } from "../domain/run/model";
 
 export type ScreenDescriptor =
   | { readonly id: "home"; readonly mode: "archive" }
   | { readonly id: "home"; readonly mode: "checkpoint" }
   | { readonly id: "route-map" }
   | { readonly id: "room" }
+  | { readonly id: "room-combat" }
   | { readonly id: "reward" };
 
 const ARCHIVE_SCREEN: ScreenDescriptor = Object.freeze({
@@ -17,7 +19,20 @@ const CHECKPOINT_SCREEN: ScreenDescriptor = Object.freeze({
 });
 const ROUTE_MAP_SCREEN: ScreenDescriptor = Object.freeze({ id: "route-map" });
 const ROOM_SCREEN: ScreenDescriptor = Object.freeze({ id: "room" });
+const ROOM_COMBAT_SCREEN: ScreenDescriptor = Object.freeze({
+  id: "room-combat",
+});
 const REWARD_SCREEN: ScreenDescriptor = Object.freeze({ id: "reward" });
+
+const COMBAT_ROOM_TYPES: readonly RoomType[] = Object.freeze([
+  "battle",
+  "elite",
+  "boss",
+]);
+
+function isCombatRoomType(roomType: RoomType): boolean {
+  return COMBAT_ROOM_TYPES.includes(roomType);
+}
 
 /** Derive the implemented screen only from validated application state. */
 export function deriveScreen(state: AppState): ScreenDescriptor {
@@ -30,6 +45,10 @@ export function deriveScreen(state: AppState): ScreenDescriptor {
       return ROUTE_MAP_SCREEN;
     }
     if (state.livingRun.phase === "room") {
+      const roomState = state.livingRun.roomState;
+      if (roomState !== null && isCombatRoomType(roomState.roomType)) {
+        return ROOM_COMBAT_SCREEN;
+      }
       return ROOM_SCREEN;
     }
     if (state.livingRun.phase === "reward") {

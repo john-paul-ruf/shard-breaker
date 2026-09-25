@@ -12,7 +12,12 @@ import type {
   RoomState,
   ShopState,
 } from "../domain/run/model";
+import type { CombatCheckpoint } from "../domain/run/model";
 import { ROUTE_SUPPORT_DEFINITIONS } from "../domain/content/rooms";
+import { fromCombatCheckpoint } from "../domain/combat/layout";
+import { resolveVolleyEffects } from "../domain/combat/effects";
+import { CombatScreen } from "../ui/screens/CombatScreen";
+import type { CombatScreenViewModel } from "../ui/screens/CombatScreen";
 import { HomeScreen } from "../ui/screens/HomeScreen";
 import type { HomeScreenViewModel } from "../ui/screens/HomeScreen";
 import { RewardsScreen } from "../ui/screens/RewardsScreen";
@@ -80,6 +85,10 @@ type RouteMapModelResult =
 
 type RoomModelResult =
   | { readonly ok: true; readonly model: RoomScreenViewModel }
+  | { readonly ok: false; readonly message: string };
+
+type CombatModelResult =
+  | { readonly ok: true; readonly model: CombatScreenViewModel }
   | { readonly ok: false; readonly message: string };
 
 type RewardsModelResult =
@@ -298,10 +307,129 @@ function createRoomModel(
               restoreAmount: recovery.restoreAmount,
               isCommitted: recovery.committed,
             },
-      isBossRoom: roomState.roomType === "boss",
       roomStatus: roomState.status,
       isBusy: state.isBusy,
       saveSignal: state.saveSignal,
+    },
+  };
+}
+
+/**
+ * Build the combat room's display model: catalog-resolved skill charges from
+ * the durable checkpoint, passive summary, the clear-outcome gate, and the
+ * two closures the Arena host needs — checkpoint→state reconstruction
+ * (CA-03) and the per-volley effect resolver against the freshest published
+ * checkpoint.
+ */
+function createCombatModel(
+  state: AppState,
+  catalog: ContentCatalog,
+): CombatModelResult {
+  const livingRun = state.livingRun;
+  if (state.loadStatus !== "ready" || livingRun === null) {
+    return {
+      ok: false,
+      message: "The combat room is not available without a living run.",
+    };
+  }
+
+  const classResult = catalog.getClass(livingRun.classId);
+  if (!classResult.ok) {
+    return {
+      ok: false,
+      message: "The saved living run references an unknown class.",
+    };
+  }
+
+  const roomState: RoomState | null = livingRun.roomState;
+  if (roomState === null) {
+    return {
+      ok: false,
+      message: "The saved living run has no committed room to display.",
+    };
+  }
+  const checkpoint: CombatCheckpoint | null = roomState.combatCheckpoint;
+  if (checkpoint === null) {
+    return {
+      ok: false,
+      message: "The combat room has no saved arena state to display.",
+    };
+  }
+
+  const skillDisplay = checkpoint.skillCharges.flatMap((charge) => {
+    const skillResult = catalog.getSkill(charge.skillId);
+    if (!skillResult.ok) {
+      return [];
+    }
+    return [
+      {
+        skillId: charge.skillId,
+        name: skillResult.value.displayName,
+        description: skillResult.value.description,
+        charges: charge.remaining,
+        maximum: charge.maximum,
+      },
+    ];
+  });
+
+  const passiveSummary = livingRun.build.passiveEquipmentIds
+    .map((equipmentId) => {
+      const result = catalog.getEquipment(equipmentId);
+      return result.ok ? result.value.displayName : null;
+    })
+    .filter((name): name is string => name !== null)
+    .join(" · ");
+
+  const initContext = {
+    seed: livingRun.seed,
+    contentVersion: livingRun.contentVersion,
+    roomId: roomState.roomId,
+    eventKey: roomState.eventKey,
+    formationId: roomState.threatProfile.formationId,
+    density: roomState.threatProfile.density,
+    durabilityFactor: roomState.threatProfile.durabilityFactor,
+    lossCount: roomState.processedOutcomeIds.filter((outcomeId) =>
+      outcomeId.startsWith(roomState.eventKey + ":outcome:loss_of_ball:"),
+    ).length,
+    hazardIds: roomState.threatProfile.hazardIds,
+  };
+
+  return {
+    ok: true,
+    model: {
+      runId: livingRun.runId,
+      className: classResult.value.displayName,
+      depth: livingRun.depth,
+      cycle: livingRun.cycle,
+      roomType: roomState.roomType,
+      roomName: roomDisplayName(catalog, roomState.roomType),
+      roomSummary: roomSummary(catalog, roomState.roomType),
+      objectiveNames: objectiveNamesFor(roomState),
+      integrityCurrent: livingRun.integrityCurrent,
+      integrityMaximum: livingRun.integrityMax,
+      runCurrency: livingRun.runCurrency,
+      skillDisplay,
+      passiveCount: livingRun.build.passiveEquipmentIds.length,
+      passiveSummary:
+        passiveSummary === "" ? "none equipped yet" : passiveSummary,
+      hasClearOutcome: roomState.processedOutcomeIds.includes(
+        roomState.eventKey + ":outcome:clear:0",
+      ),
+      isBusy: state.isBusy,
+      saveSignal: state.saveSignal,
+      arena: {
+        roomName: roomDisplayName(catalog, roomState.roomType),
+        skillDisplay,
+        isBusy: state.isBusy,
+      },
+      createInitialState: () => fromCombatCheckpoint(checkpoint, initContext, catalog),
+      resolveVolleyEffects: () =>
+        resolveVolleyEffects(
+          catalog,
+          livingRun.build,
+          [],
+          checkpoint.skillCharges,
+        ),
     },
   };
 }
@@ -382,6 +510,15 @@ export function App({ store, catalog }: AppProps) {
   }
 
   const screen = deriveScreen(state);
+
+  if (screen.id === "room-combat") {
+    const combatModel = createCombatModel(state, catalog);
+    return combatModel.ok ? (
+      <CombatScreen model={combatModel.model} dispatch={dispatch} />
+    ) : (
+      <ErrorShell message={combatModel.message} />
+    );
+  }
 
   if (screen.id === "room") {
     const roomModel = createRoomModel(state, catalog);

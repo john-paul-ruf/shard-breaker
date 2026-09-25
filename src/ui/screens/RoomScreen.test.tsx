@@ -72,7 +72,6 @@ function baseModel(
     runCurrency: 0,
     shop: null,
     recovery: null,
-    isBossRoom: false,
     roomStatus: "ready",
     isBusy: false,
     saveSignal: null,
@@ -206,42 +205,6 @@ describe("RoomScreen", () => {
     );
     expect(
       screen.getByRole("button", { name: "Recovery committed ✓" }),
-    ).toBeDisabled();
-  });
-
-  it("renders the combat placeholder for battle rooms with resolve disabled", () => {
-    render(
-      <RoomScreen
-        model={baseModel({
-          roomType: "battle",
-          roomName: "Glassway",
-        })}
-        dispatch={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(/The combat engine is coming soon\./)).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Advance to reward draft" }),
-    ).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Buy" })).not.toBeInTheDocument();
-  });
-
-  it("renders the boss placeholder for boss rooms with resolve disabled", () => {
-    render(
-      <RoomScreen
-        model={baseModel({
-          roomType: "boss",
-          roomName: "Mandatory Boss",
-          isBossRoom: true,
-        })}
-        dispatch={vi.fn()}
-      />,
-    );
-    expect(
-      screen.getByText(/The boss arena is not implemented yet\./),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Advance to reward draft" }),
     ).toBeDisabled();
   });
 

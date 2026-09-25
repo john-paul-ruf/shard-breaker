@@ -32,7 +32,6 @@ export interface RoomScreenViewModel {
     readonly restoreAmount: number;
     readonly isCommitted: boolean;
   } | null;
-  readonly isBossRoom: boolean;
   readonly roomStatus: "ready" | "in_progress" | "resolved";
   readonly isBusy: boolean;
   readonly saveSignal: SaveSignalView;
@@ -51,16 +50,6 @@ const ROOM_TYPE_LABELS: Readonly<Record<RoomType, string>> = Object.freeze({
   boss: "Boss",
 });
 
-const COMBAT_ROOM_TYPES: readonly RoomType[] = Object.freeze([
-  "battle",
-  "elite",
-  "boss",
-]);
-
-function isCombatRoom(roomType: RoomType): boolean {
-  return COMBAT_ROOM_TYPES.includes(roomType);
-}
-
 function formatDepth(value: number): string {
   const safe = Number.isSafeInteger(value) ? Math.max(0, value) : 0;
   return String(safe).padStart(2, "0");
@@ -68,10 +57,9 @@ function formatDepth(value: number): string {
 
 /** Room screen: the committed room's state, utility interactions, and advance action. */
 export function RoomScreen({ model, dispatch }: RoomScreenProps) {
-  const isCombat = isCombatRoom(model.roomType);
   const isRoomResolved = model.roomStatus === "resolved";
   const isMutationDisabled = model.isBusy || isRoomResolved;
-  const canResolve = !isCombat && !isMutationDisabled;
+  const canResolve = !isMutationDisabled;
   const canBuy =
     !isMutationDisabled && model.shop !== null && model.shop.hasItems;
   const canCommitRecovery =
@@ -192,20 +180,6 @@ export function RoomScreen({ model, dispatch }: RoomScreenProps) {
               >
                 {model.recovery.isCommitted ? "Recovery committed ✓" : "Commit recovery"}
               </button>
-            </div>
-          ) : null}
-
-          {isCombat ? (
-            <div className="room-combat-placeholder">
-              <p className="signal-eyebrow" data-tone="warning">
-                Combat engine
-              </p>
-              <p>
-                {model.isBossRoom
-                  ? "The boss arena is not implemented yet."
-                  : "The combat engine is coming soon."}{" "}
-                This room cannot be resolved until it ships.
-              </p>
             </div>
           ) : null}
 
