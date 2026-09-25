@@ -63,6 +63,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-09-24 | combat-engine SESSION-07: Added the finalizeDeath one-transaction terminal boundary (sanctioned scoped seam; optional capability pending the App.test.tsx fixture member) — see the fragment below. |
 | 2026-08-29 | Imported Genesis M07 and database contracts into the Forge registry. |
 | 2026-08-29 | Added the run-lifecycle repository, v1 envelope validation, and migration-backed database opening. |
 | 2026-09-14 | route-drafting SESSION-01: Added saveCheckpoint repository method and SaveCheckpointPersistenceInstruction for atomic checkpoint persistence. |
@@ -108,3 +109,31 @@
   `"active" | "passive"` enum) — Correction 2's durable replacement record.
   No other rule touched; the `invalid-empty-route-depth` invariant and its
   "empty route after depth one" test row pass unchanged (Correction 1).
+
+
+<!-- combat-engine SESSION-07 -->
+## Death terminal transaction (combat-engine SESSION-07)
+
+- `envelopes.ts` (M04, sanctioned scoped seam) — new exported type
+  `FinalizeDeathPersistenceInstruction`; `RunLifecycleRepository` gains
+  `finalizeDeath(instruction)` as an **optional capability**: the committed
+  exhaustive typed fixture in `src/app/App.test.tsx` (outside the session's
+  lease) implements the interface literally, so a required member would break
+  that file's compile. The optional member keeps the fail-closed discipline —
+  the store treats an absent implementation as a typed refusal, never as
+  success. Tightening it to required is a one-line owner correction once the
+  fixture gains the member.
+- `repositories.ts` (M04, sanctioned scoped seam) — `finalizeDeath` implemented
+  per `specs/database.md`'s "Finalize death/completion" boundary: one
+  read/write transaction over both singleton stores — validate the stored
+  profile, validate the proposed terminal profile, verify the living run's
+  identity/revision, verify the summary describes the dying run (field-level
+  mismatch fails closed), write the profile, delete the living run. Retry after
+  a committed finalization finds no living run and is rejected without changes
+  when the instruction matches `lastFinalizedRunId`/summary
+  (`living-run-missing`), or with `invalid-living-run` when it does not (no
+  double-award path). Trust-level note: the depleted-integrity precondition is
+  the reducer's authority (the terminal transition never persists a
+  zero-integrity checkpoint, so the stored record legitimately stands one loss
+  above zero when the instruction arrives); identity, revision, and summary
+  coherence are this layer's checks — the same trust level as abandon-run.

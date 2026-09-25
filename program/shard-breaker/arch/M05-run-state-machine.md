@@ -59,6 +59,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-09-24 | combat-engine SESSION-07: Added battleCurrencyGrant (CA-13 seeded clear-time currency rule) and the finalize-death transition replacing the interim loss-at-0 rejection (CAP-12) — see the fragment below. |
 | 2026-08-29 | Imported Genesis M05 contract into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-01: Added MaterializeRoute/SelectRouteOffer/CommitRoute commands, reducer transitions with generator-to-snapshot mapping, save-checkpoint persistence instruction. |
 | 2026-09-22 | room-resolution SESSION-02: Added BuyShopItem/CommitRecovery/ResolveRoom/SelectReward commands, four reducer transitions with generator-to-snapshot mapping, RewardState replacement fields, and ten new rejection codes. |
@@ -175,3 +176,47 @@
 - `validation.ts` — room-level invariants: combat↔utility checkpoint
   coherence, skill charges within authored maximums, unresolved battle/elite
   rooms must carry a non-defeated enemy, CA-02 ledger room-scoping/uniqueness.
+
+
+<!-- combat-engine SESSION-07 -->
+## Currency grant and death terminal (combat-engine SESSION-07)
+
+- `reducer.ts` (M03) — new export `battleCurrencyGrant(seed, contentVersion,
+  roomEventKey, roomType, depth): number` — the CA-13 seeded clear-time grant
+  rule: one Mulberry32 draw from
+  `(seed, contentVersion, "<roomEventKey>:battle-currency")`; battle 15–60,
+  elite 25–80 (strictly greater range), plus a `2×depth` term capped at +32.
+  Pure and deterministic; the reducer's `ReportCombatOutcome` clear branch is
+  the sole consumer (battle/elite grant, boss/utility 0; depth-1 grant observed
+  = 23 room shards). Session-sketch mapping recorded: the sketch omitted the
+  `depth` parameter, but CA-13's approved range (+2×depth capped +32) requires
+  it. New module-private `WALL_HITS_CARRIER_LANDING = 0` beside S02's
+  `ROLLED_PARAMS_CARRIER_LANDING`: the volley's wall-hit count lives in the
+  bridge's ephemeral session and the committed outcome message carries only the
+  outcome identity, so the Fractal Core `wallHitCurrencyRate` term contributes
+  zero until a durable wall-hit carrier lands (producer seam owned by the
+  bridge's outcome dispatcher; same deferral class as the rolled-params
+  carrier). Rolled-params carrier decision (CA-13 planning authority):
+  `ROLLED_PARAMS_CARRIER_LANDING` stays `[]` — a durable carrier requires
+  widening the committed reward/durable shapes (SelectReward retains only
+  granted items; rolled params live on consumed draft cards), which is
+  persistence-schema/Author territory beyond the lease; the resolver consumes
+  empty params, never invents values.
+- `commands.ts` (M03) — `RunPersistenceInstruction` gains the `finalize-death`
+  variant: `{ kind, runId, commitId, expectedRevision, summary:
+  RunSummarySnapshot }`.
+- Store handler (`appStore.ts`, M06) — `combat/report-outcome` branches on the
+  transition's instruction kind: `finalize-death` routes to
+  `handleCombatFinalizeDeath`, which persists through the repository boundary
+  and publishes archive-mode truth (`livingRun: null`, bounded terminal save
+  signal). A missing repository implementation fails closed with a rejection
+  message. E2e reader (`tests/e2e/indexedDb.ts`, M08) — `StoredProfileRecord`
+  gains `lastRunSummary` (new `StoredRunSummaryRecord`) and
+  `lastFinalizedRunId`; `StoredLivingRunRecord.roomState.processedOutcomeIds`
+  narrows to `readonly string[]`.
+- Journey evidence recorded: clearing a battle room by pure pointer play is
+  structurally unreachable (exhaustive probe: 7,625 deterministic launches
+  across 25 seeds × 61 angles × 5 paddles — zero clears; a loss restores the
+  room-entry formation snapshot, so volley damage never accumulates). The
+  CA-13/CA-15 browser proofs for clear-time currency and boss defeat remain
+  planned; see the session handoff's follow-up for the owner seam.
