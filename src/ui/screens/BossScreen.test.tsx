@@ -8,6 +8,8 @@ import type { ContentId } from "../../domain/content/catalog";
 import { createBossCombatState } from "../../domain/combat/bossState";
 import { NEUTRAL_EFFECTS } from "../../domain/combat/effects";
 import { createCombatState } from "../../domain/combat/layout";
+import { deriveBossProjection } from "../../domain/combat/bossState";
+import { outcomeIdFor } from "../../domain/combat/results";
 import type { CombatInitContext } from "../../domain/combat/model";
 import { BossScreen } from "./BossScreen";
 import type { BossScreenViewModel } from "./BossScreen";
@@ -356,5 +358,68 @@ describe("BossScreen actions", () => {
     render(<BossScreen model={baseModel()} dispatch={dispatch} />);
     await user.click(screen.getByRole("button", { name: "Return to archive" }));
     expect(dispatch).toHaveBeenCalledWith({ type: "run/return-to-archive" });
+  });
+});
+describe("BossScreen run wallet and defeat gating (S07-CP3)", () => {
+  it("binds the Room shards stat to the live run wallet", () => {
+    render(<BossScreen model={baseModel({ runCurrency: 40 })} dispatch={vi.fn()} />);
+    const stats = within(screen.getByLabelText("Run status"));
+    const shardsStat = stats.getByText("Room shards").closest(
+      ".room-header__stat",
+    );
+    expect(shardsStat).not.toBeNull();
+    expect(shardsStat).toHaveTextContent("40");
+  });
+
+  it("keeps the run Integrity meter beside the boss integrity meter", () => {
+    render(<BossScreen model={baseModel()} dispatch={vi.fn()} />);
+    expect(screen.getByRole("img", { name: "3 of 3 Integrity" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "6 of 6 Boss integrity" }),
+    ).toBeInTheDocument();
+  });
+
+  it("surfaces the clear banner and enables advance once the boss is defeated", () => {
+    const runtime = bossRuntime();
+    const defeatedArena = {
+      ...runtime.arena,
+      phase: "resolved" as const,
+      outcome: {
+        outcomeId: outcomeIdFor(EVENT_KEY, "clear", 0),
+        kind: "clear" as const,
+      },
+    };
+    const defeatedRuntime = {
+      ...runtime,
+      arena: defeatedArena,
+      projection: deriveBossProjection(runtime.definition, defeatedArena),
+    };
+    render(
+      <BossScreen
+        model={baseModel({
+          hasClearOutcome: true,
+          boss: defeatedRuntime,
+          createInitialState: () => defeatedArena,
+        })}
+        dispatch={vi.fn()}
+      />,
+    );
+    const arenaStatus = document.querySelector(".arena-status");
+    expect(arenaStatus).toHaveAttribute("data-status", "clear");
+    expect(arenaStatus).toHaveTextContent("Room clear");
+    expect(
+      screen.getByRole("button", { name: "Advance to reward draft" }),
+    ).toBeEnabled();
+    expect(defeatedRuntime.projection.defeated).toBe(true);
+  });
+
+  it("keeps advance gated on the defeat reason before the clear outcome", () => {
+    render(<BossScreen model={baseModel()} dispatch={vi.fn()} />);
+    expect(
+      screen.getByRole("button", { name: "Advance to reward draft" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText("Defeat the boss to open the reward draft."),
+    ).toBeInTheDocument();
   });
 });

@@ -7,6 +7,8 @@ import { createContentCatalog } from "../../domain/content/catalog";
 import type { ContentId } from "../../domain/content/catalog";
 import { NEUTRAL_EFFECTS } from "../../domain/combat/effects";
 import { createCombatState } from "../../domain/combat/layout";
+import { launchBall, movePaddle, stepCombat } from "../../domain/combat/rules";
+import { outcomeIdFor } from "../../domain/combat/results";
 import type { CombatInitContext } from "../../domain/combat/model";
 import { CombatScreen } from "./CombatScreen";
 import type { CombatScreenViewModel } from "./CombatScreen";
@@ -93,6 +95,15 @@ function initContext(
     hazardIds: [HAZARD_SHIFT],
     ...overrides,
   };
+}
+
+/** Step the deterministic loss volley to its bounded outcome. */
+function stepUntilOutcome(state: ReturnType<typeof launchBall>) {
+  let current = state;
+  for (let index = 0; index < 1_000 && current.outcome === null; index += 1) {
+    current = stepCombat(current, 1);
+  }
+  return current;
 }
 
 function baseModel(
@@ -282,5 +293,84 @@ describe("CombatScreen advance gating", () => {
     render(<CombatScreen model={baseModel()} dispatch={dispatch} />);
     await user.click(screen.getByRole("button", { name: "Return to archive" }));
     expect(dispatch).toHaveBeenCalledWith({ type: "run/return-to-archive" });
+  });
+});
+
+describe("CombatScreen run wallet and banner states (S07-CP3)", () => {
+  it("binds the Room shards stat to the live run wallet", () => {
+    render(<CombatScreen model={baseModel({ runCurrency: 74 })} dispatch={vi.fn()} />);
+    const stats = within(screen.getByLabelText("Run status"));
+    const shardsStat = stats.getByText("Room shards").closest(
+      ".room-header__stat",
+    );
+    expect(shardsStat).not.toBeNull();
+    expect(shardsStat).toHaveTextContent("74");
+  });
+
+  it("pads a small live wallet to the telemetry width", () => {
+    render(<CombatScreen model={baseModel({ runCurrency: 7 })} dispatch={vi.fn()} />);
+    const stats = within(screen.getByLabelText("Run status"));
+    const shardsStat = stats.getByText("Room shards").closest(
+      ".room-header__stat",
+    );
+    expect(shardsStat).toHaveTextContent("07");
+  });
+
+  it("surfaces the loss banner text through the composed arena status line (CA-08)", () => {
+    const lossState = {
+      ...createCombatState(catalog, initContext()),
+      outcome: {
+        outcomeId: outcomeIdFor(EVENT_KEY, "loss_of_ball", 0),
+        kind: "loss_of_ball" as const,
+      },
+    };
+    const { container } = render(
+      <CombatScreen
+        model={baseModel({ createInitialState: () => lossState })}
+        dispatch={vi.fn()}
+      />,
+    );
+    const status = container.querySelector(".arena-status");
+    expect(status).not.toBeNull();
+    expect(status).toHaveAttribute("data-status", "loss");
+    expect(status).toHaveTextContent("Loss of ball — Integrity -1");
+  });
+
+  it("surfaces the clear banner text with the advance control enabled", () => {
+    const clearState = {
+      ...createCombatState(catalog, initContext()),
+      phase: "resolved" as const,
+      outcome: {
+        outcomeId: outcomeIdFor(EVENT_KEY, "clear", 0),
+        kind: "clear" as const,
+      },
+    };
+    render(
+      <CombatScreen
+        model={baseModel({
+          hasClearOutcome: true,
+          createInitialState: () => clearState,
+        })}
+        dispatch={vi.fn()}
+      />,
+    );
+    const arenaStatus = document.querySelector(".arena-status");
+    expect(arenaStatus).toHaveAttribute("data-status", "clear");
+    expect(arenaStatus).toHaveTextContent("Room clear");
+    expect(
+      screen.getByRole("button", { name: "Advance to reward draft" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps the loss volley fixture deterministic for the browser journeys", () => {
+    const volley = launchBall(
+      movePaddle(createCombatState(catalog, initContext()), 80),
+      -0.6,
+    );
+    const stepped = stepUntilOutcome(volley);
+    expect(stepped.outcome?.kind).toBe("loss_of_ball");
+    expect(stepped.outcome?.outcomeId).toBe(
+      outcomeIdFor(EVENT_KEY, "loss_of_ball", 0),
+    );
   });
 });
