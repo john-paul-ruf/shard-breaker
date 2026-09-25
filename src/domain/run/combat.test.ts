@@ -4,6 +4,10 @@ import type { ContentId } from "../content/catalog";
 import { createContentCatalog } from "../content/catalog";
 import { AIM_MAX_DEVIATION } from "../combat/model";
 import { outcomeIdFor } from "../combat/results";
+import { generateRoomCandidate } from "../random/generators";
+import { battleCurrencyGrant } from "./reducer";
+import { deriveStream } from "../random/seededRng";
+import { routeEventKey } from "./routes";
 import { fromCombatCheckpoint } from "../combat/layout";
 import type { RunCommand } from "./commands";
 import { runReducer } from "./reducer";
@@ -777,5 +781,209 @@ describe("CAP-04 — clear enables resolution", () => {
     expect(lost.ok).toBe(true);
     if (!lost.ok) return;
     expectRejection(runReducer(lost.state, resolveCommand(4), catalog), "combat-not-implemented");
+  });
+});
+
+describe("CA-13 — clear-time currency grant", () => {
+  function clearedBattleState(): RunState {
+    const state = runInRoomPhase("battle");
+    const room = state.livingRun!.roomState!;
+    const transition = runReducer(
+      state,
+      reportOutcomeCommand(3, {
+        outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+        kind: "clear",
+      }),
+      catalog,
+    );
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) throw new Error("clear must succeed");
+    return transition.state;
+  }
+
+  it("banks a deterministic seeded grant for a battle clear in the same transition", () => {
+    const state = runInRoomPhase("battle");
+    const room = state.livingRun!.roomState!;
+    const currencyBefore = state.livingRun!.runCurrency;
+
+    const transition = runReducer(
+      deepFreeze(state),
+      deepFreeze(
+        reportOutcomeCommand(3, {
+          outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+          kind: "clear",
+        }),
+      ),
+      catalog,
+    );
+
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    const run = expectPersistableLivingRun(transition.state);
+    expect(run.runCurrency).toBeGreaterThan(currencyBefore);
+    expect(run.roomState!.processedOutcomeIds).toContain(
+      outcomeIdFor(room.eventKey, "clear", 0),
+    );
+    expect(run.revision).toBe(4);
+  });
+
+  it("derives the grant from (seed, contentVersion, room event key) via the committed stream", () => {
+    const first = clearedBattleState();
+    const second = clearedBattleState();
+    expect(first.livingRun!.runCurrency).toBe(second.livingRun!.runCurrency);
+    expect(first.livingRun!.runCurrency).toBeGreaterThan(0);
+  });
+
+  it("lands inside the CA-13 battle band (15–60 + capped depth term) at depth 1", () => {
+    const state = clearedBattleState();
+    const currency = state.livingRun!.runCurrency;
+    expect(currency).toBeGreaterThanOrEqual(15);
+    expect(currency).toBeLessThanOrEqual(60 + 32);
+    expect(currency).toBeLessThanOrEqual(62);
+  });
+
+  it("scales the grant with depth and caps the depth term at +32", () => {
+    // The room event key embeds the depth, so the depth term is isolated
+    // through the exported grant rule against one fixed room key.
+    const seed = "seed-depth-scaling";
+    const contentVersion = catalog.contentVersion;
+    const roomEventKey = "route:content-1:run-1:1:room:room-battle-glassway";
+    const atDepth1 = battleCurrencyGrant(seed, contentVersion, roomEventKey, "battle", 1);
+    const atDepth5 = battleCurrencyGrant(seed, contentVersion, roomEventKey, "battle", 5);
+    const atDepth40 = battleCurrencyGrant(seed, contentVersion, roomEventKey, "battle", 40);
+    // 2×depth grows by exactly 8 from depth 1 to 5 (below the +32 cap).
+    expect(atDepth5 - atDepth1).toBe(8);
+    // Depths at and beyond the cap produce the identical grant: the depth
+    // term saturates at +32 (2×16 = 32 = cap).
+    const atDepth16 = battleCurrencyGrant(seed, contentVersion, roomEventKey, "battle", 16);
+    expect(atDepth16).toBe(atDepth40);
+    expect(atDepth40).toBeLessThanOrEqual(60 + 32);
+  });
+
+  it("is stream-isolated: an unrelated draw on another key never perturbs the grant", () => {
+    const state = runInRoomPhase("battle");
+    const room = state.livingRun!.roomState!;
+    const expected = battleCurrencyGrant(
+      state.livingRun!.seed,
+      state.livingRun!.contentVersion,
+      room.eventKey,
+      "battle",
+      state.livingRun!.depth,
+    );
+    // Consuming a foreign stream first must not change the grant draw.
+    deriveStream(state.livingRun!.seed, catalog.contentVersion, "unrelated:stream").nextInt(97);
+    const transition = runReducer(
+      state,
+      reportOutcomeCommand(3, {
+        outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+        kind: "clear",
+      }),
+      catalog,
+    );
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.livingRun!.runCurrency).toBe(expected);
+  });
+
+  it("grants an elite clear a strictly larger amount than the identical battle input", () => {
+    const battle = clearedBattleState().livingRun!.runCurrency;
+    const eliteState = runInRoomPhase("elite");
+    const eliteRoom = eliteState.livingRun!.roomState!;
+    const eliteTransition = runReducer(
+      eliteState,
+      reportOutcomeCommand(3, {
+        outcomeId: outcomeIdFor(eliteRoom.eventKey, "clear", 0),
+        kind: "clear",
+      }),
+      catalog,
+    );
+    expect(eliteTransition.ok).toBe(true);
+    if (!eliteTransition.ok) return;
+    const elite = eliteTransition.state.livingRun!.runCurrency;
+    expect(elite).toBeGreaterThanOrEqual(25);
+    expect(elite).toBeGreaterThanOrEqual(battle);
+  });
+
+  it("grants zero currency for a boss clear (the boss draft is the reward)", () => {
+    // A boss room only exists at boss depths, so build the depth-3 boss room
+    // state through the committed generator rather than the depth-1 route.
+    const baseRun = makeLivingRun({ depth: 3, cycle: 1 });
+    const candidate = generateRoomCandidate(catalog, {
+      seed: baseRun.seed,
+      contentVersion: baseRun.contentVersion,
+      runId: baseRun.runId,
+      depth: baseRun.depth,
+      cycle: baseRun.cycle,
+      integrityCurrent: baseRun.integrityCurrent,
+      integrityMax: baseRun.integrityMax,
+      runCurrency: baseRun.runCurrency,
+      routeEventKey: routeEventKey(baseRun.runId, baseRun.contentVersion, baseRun.depth),
+      selectedOfferId: `route:content-1:${baseRun.runId}:3:offer:room-boss-mandatory`,
+    });
+    const bossRun: LivingRun = {
+      ...baseRun,
+      phase: "room",
+      routeState: null,
+      roomState: {
+        roomId: candidate.roomId,
+        roomType: candidate.roomType,
+        eventKey: candidate.eventKey,
+        status: candidate.status,
+        objectiveIds: [...candidate.objectiveIds],
+        threatProfile: {
+          budget: candidate.threatProfile.budget,
+          durabilityFactor: candidate.threatProfile.durabilityFactor,
+          density: candidate.threatProfile.density,
+          formationId: candidate.threatProfile.formationId,
+          hazardIds: [...candidate.threatProfile.hazardIds],
+          bossModifierIds: [...candidate.threatProfile.bossModifierIds],
+        },
+        combatCheckpoint: candidate.combatCheckpoint,
+        processedOutcomeIds: [...candidate.processedOutcomeIds],
+        shop: candidate.shop,
+        recovery: candidate.recovery,
+        boss: candidate.boss,
+        resolutionCommitId: candidate.resolutionCommitId,
+      },
+      revision: 3,
+    };
+    const bossState = stateWith(bossRun);
+    const room = bossRun.roomState!;
+    const transition = runReducer(
+      deepFreeze(bossState),
+      deepFreeze(
+        reportOutcomeCommand(3, {
+          outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+          kind: "clear",
+        }),
+      ),
+      catalog,
+    );
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.livingRun!.runCurrency).toBe(0);
+    expectPersistableLivingRun(transition.state);
+  });
+
+  it("never double-grants: a replayed clear outcome is rejected by the ledger", () => {
+    const state = runInRoomPhase("battle");
+    const room = state.livingRun!.roomState!;
+    const outcome = {
+      outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+      kind: "clear" as const,
+    };
+    const first = runReducer(state, reportOutcomeCommand(3, outcome), catalog);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const granted = first.state.livingRun!.runCurrency;
+
+    const replay = runReducer(
+      first.state,
+      reportOutcomeCommand(4, outcome),
+      catalog,
+    );
+    expectRejection(replay, "duplicate-outcome-id");
+    expect(replay.state).toBe(first.state);
+    expect(replay.state.livingRun!.runCurrency).toBe(granted);
   });
 });

@@ -14,6 +14,8 @@ import type {
   SaveCheckpointPersistenceInstruction,
   StartRunPersistenceInstruction,
 } from "../persistence/envelopes";
+import { generateRoomCandidate } from "../domain/random/generators";
+import { routeEventKey } from "../domain/run/routes";
 import { createAppStore } from "./appStore";
 import type { AppStore } from "./appStore";
 
@@ -1128,13 +1130,18 @@ describe("createAppStore combat commands", () => {
     await storeInRoomPhase("battle", store);
     const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
 
+    const currencyBefore = store.getSnapshot().livingRun!.runCurrency;
     await store.dispatch({
       type: "combat/report-outcome",
       outcome: { outcomeId: `${eventKey}:outcome:clear:0`, kind: "clear" },
     });
+    // CA-13: a battle clear banks the room's seeded grant and the save
+    // signal names the committed delta.
+    const banked = store.getSnapshot().livingRun!.runCurrency - currencyBefore;
+    expect(banked).toBeGreaterThan(0);
     expect(store.getSnapshot().saveSignal).toMatchObject({
       tone: "saved",
-      message: "Combat outcome committed.",
+      message: `Room resolved. ${String(banked)} room shards banked.`,
     });
 
     await store.dispatch({ type: "room/resolve" });
@@ -1217,6 +1224,104 @@ describe("createAppStore combat commands", () => {
       message: "Clear this room's combat encounter before it can be resolved.",
     });
     expect(repository.saveCheckpoint).toHaveBeenCalledTimes(3);
+  });
+
+  it("banks the clear-time currency with the room-shards save signal (CA-13)", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun();
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-outcome",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+    const currencyBefore = store.getSnapshot().livingRun!.runCurrency;
+
+    await store.dispatch({
+      type: "combat/report-outcome",
+      outcome: { outcomeId: `${eventKey}:outcome:clear:0`, kind: "clear" },
+    });
+
+    const snapshot = store.getSnapshot();
+    const banked = snapshot.livingRun!.runCurrency - currencyBefore;
+    expect(banked).toBeGreaterThan(0);
+    expect(snapshot.livingRun!.roomState!.processedOutcomeIds).toEqual([
+      `${eventKey}:outcome:clear:0`,
+    ]);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: `Room resolved. ${String(banked)} room shards banked.`,
+    });
+  });
+
+  it("keeps the plain outcome message for a boss clear, which grants no currency", async () => {
+    const profile = makeProfile();
+    const baseRun = makeLivingRun({ depth: 3, cycle: 1 });
+    const candidate = generateRoomCandidate(catalog, {
+      seed: baseRun.seed,
+      contentVersion: baseRun.contentVersion,
+      runId: baseRun.runId,
+      depth: baseRun.depth,
+      cycle: baseRun.cycle,
+      integrityCurrent: baseRun.integrityCurrent,
+      integrityMax: baseRun.integrityMax,
+      runCurrency: baseRun.runCurrency,
+      routeEventKey: routeEventKey(baseRun.runId, baseRun.contentVersion, baseRun.depth),
+      selectedOfferId: `route:content-1:${baseRun.runId}:3:offer:room-boss-mandatory`,
+    });
+    const bossRun: LivingRun = {
+      ...baseRun,
+      phase: "room",
+      routeState: null,
+      roomState: {
+        roomId: candidate.roomId,
+        roomType: candidate.roomType,
+        eventKey: candidate.eventKey,
+        status: candidate.status,
+        objectiveIds: [...candidate.objectiveIds],
+        threatProfile: {
+          budget: candidate.threatProfile.budget,
+          durabilityFactor: candidate.threatProfile.durabilityFactor,
+          density: candidate.threatProfile.density,
+          formationId: candidate.threatProfile.formationId,
+          hazardIds: [...candidate.threatProfile.hazardIds],
+          bossModifierIds: [...candidate.threatProfile.bossModifierIds],
+        },
+        combatCheckpoint: candidate.combatCheckpoint,
+        processedOutcomeIds: [...candidate.processedOutcomeIds],
+        shop: candidate.shop,
+        recovery: candidate.recovery,
+        boss: candidate.boss,
+        resolutionCommitId: candidate.resolutionCommitId,
+      },
+      revision: 3,
+    };
+    const repository = createRouteMemoryRepository(profile, bossRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-outcome"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+
+    await store.dispatch({
+      type: "combat/report-outcome",
+      outcome: { outcomeId: `${eventKey}:outcome:clear:0`, kind: "clear" },
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun!.runCurrency).toBe(bossRun.runCurrency);
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Combat outcome committed.",
+    });
   });
 
   it("rejects a duplicate outcome report and leaves the archive unchanged", async () => {

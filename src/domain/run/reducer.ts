@@ -1,9 +1,10 @@
-import type { ContentCatalog, ContentId } from "../content/catalog";
+import type { ContentCatalog, ContentId, ContentVersion } from "../content/catalog";
 import type {
   GeneratedRewardCard,
   GeneratedRouteOffer,
   GeneratedRoomCandidate,
 } from "../random/generators";
+import { deriveStream } from "../random/seededRng";
 import {
   generateRewardDraft,
   generateRouteOptions,
@@ -580,6 +581,42 @@ function combatContextFor(run: LivingRun, room: RoomState): CombatInitContext {
 const ROLLED_PARAMS_CARRIER_LANDING: readonly EffectParam[] = Object.freeze([]);
 
 /**
+ * Wall hits carried into the clear-time grant. The volley's wall-hit count
+ * lives in the bridge's ephemeral session and the committed outcome message
+ * carries only the outcome identity, so until a durable wall-hit carrier
+ * lands this term contributes zero — empty, never invented (the same
+ * deferral class as the rolled-params carrier above; the bridge's outcome
+ * dispatcher owns the producer side).
+ */
+const WALL_HITS_CARRIER_LANDING = 0;
+
+const BATTLE_CURRENCY_MIN = 15;
+const BATTLE_CURRENCY_RANGE = 46;
+const ELITE_CURRENCY_MIN = 25;
+const ELITE_CURRENCY_RANGE = 56;
+const CURRENCY_DEPTH_BONUS_CAP = 32;
+
+/**
+ * The seeded clear-time currency grant (CA-13): one draw from
+ * `(seed, contentVersion, <roomEventKey>:battle-currency)`, scaled into the
+ * room type's range — battle 15–60, elite 25–80 (a strictly greater range) —
+ * plus 2×depth capped at +32. Deterministic and persistence-safe.
+ */
+export function battleCurrencyGrant(
+  seed: string,
+  contentVersion: ContentVersion,
+  roomEventKey: string,
+  roomType: "battle" | "elite",
+  depth: number,
+): number {
+  const depthBonus = Math.min(Math.max(0, depth) * 2, CURRENCY_DEPTH_BONUS_CAP);
+  const draw = deriveStream(seed, contentVersion, `${roomEventKey}:battle-currency`);
+  return roomType === "elite"
+    ? ELITE_CURRENCY_MIN + draw.nextInt(ELITE_CURRENCY_RANGE) + depthBonus
+    : BATTLE_CURRENCY_MIN + draw.nextInt(BATTLE_CURRENCY_RANGE) + depthBonus;
+}
+
+/**
  * Launch the ball in this room's combat arena. The command validates the aim
  * against S01's legal cone and mirrors the room-entry checkpoint through
  * `fromCombatCheckpoint` (which fails closed on stale or foreign layouts),
@@ -871,6 +908,18 @@ function reportCombatOutcome(
 
   let updatedRun: LivingRun;
   if (reported.kind === "clear") {
+    // CA-13: the clear outcome banks the room's seeded currency in this same
+    // transition; the CA-02 ledger above guarantees it can be granted once.
+    const grant =
+      room.roomType === "battle" || room.roomType === "elite"
+        ? battleCurrencyGrant(
+            run.seed,
+            run.contentVersion,
+            room.eventKey,
+            room.roomType,
+            run.depth,
+          ) + WALL_HITS_CARRIER_LANDING
+        : 0;
     const updatedRoom: RoomState = Object.freeze({
       ...room,
       status: "in_progress",
@@ -879,6 +928,7 @@ function reportCombatOutcome(
     updatedRun = {
       ...run,
       roomState: updatedRoom,
+      runCurrency: run.runCurrency + grant,
       revision: run.revision + 1,
       updatedAt: command.now,
       lastCommitId: command.commitId,

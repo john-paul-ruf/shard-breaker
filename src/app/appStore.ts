@@ -910,10 +910,17 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
         return;
       }
 
+      // A battle/elite clear banks the room's seeded currency (CA-13); the
+      // committed delta names the amount in the bounded save feedback.
+      const banked = committed.value.livingRun.runCurrency - livingRun.runCurrency;
+      const outcomeMessage =
+        banked > 0
+          ? `Room resolved. ${String(banked)} room shards banked.`
+          : "Combat outcome committed.";
       publish({
         livingRun: committed.value.livingRun,
         isBusy: false,
-        saveSignal: { tone: "saved", message: "Combat outcome committed." },
+        saveSignal: { tone: "saved", message: outcomeMessage },
       });
     } catch {
       rejectCommand(
