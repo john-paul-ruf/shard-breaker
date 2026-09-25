@@ -34,6 +34,14 @@ import {
   stepCombat,
 } from "./rules";
 import { outcomeIdFor } from "./results";
+import {
+  bossCoreIdFor,
+  createBossCombatState,
+  deriveBossProjection,
+  stepBoss,
+} from "./bossState";
+import type { BossCombatInitContext } from "./bossState";
+import type { CombatState } from "./model";
 
 const catalog = createContentCatalog();
 const asContentId = (value: string): ContentId => value as ContentId;
@@ -645,5 +653,148 @@ describe("combat simulation core", () => {
     const ball = bent.balls[0]!;
     expect(ball.vx).toBeCloseTo(24 * HAZARD_DEFLECT_FACTOR, 6);
     expect(Math.hypot(ball.vx, ball.vy)).toBeCloseTo(48, 6);
+  });
+});
+
+describe("boss combat integration", () => {
+  const BOSS_ROOM = asContentId("room-boss-mandatory");
+  const BOSS_EVENT_KEY = "route:content-1:run-1:3:room:room-boss-mandatory";
+
+  function bossContext(overrides: Partial<BossCombatInitContext> = {}): BossCombatInitContext {
+    return {
+      ...initContext({
+        roomId: "route:content-1:run-1:3:room:room-boss-mandatory:candidate",
+        eventKey: BOSS_EVENT_KEY,
+        formationId: BOSS_ROOM,
+        density: 6,
+        hazardIds: [],
+      }),
+      archetypeId: asContentId("boss-warden"),
+      modifierIds: [],
+      ...overrides,
+    };
+  }
+
+  it("composes the boss anatomy over the formation and keeps it deterministic", () => {
+    const runtime = createBossCombatState(catalog, bossContext());
+    expect(
+      runtime.arena.enemies.some(
+        (enemy) => enemy.instanceId === bossCoreIdFor(BOSS_EVENT_KEY),
+      ),
+    ).toBe(true);
+    expect(runtime.arena.hazards).toHaveLength(2);
+    expect(createBossCombatState(catalog, bossContext())).toEqual(runtime);
+  });
+
+  it("steps the composed arena through S01's loop and keeps outcomes exactly-once", () => {
+    const runtime = createBossCombatState(catalog, bossContext());
+    const live = launchBall(movePaddle(runtime.arena, 80), 0.2);
+    const stepped = stepBoss(runtime, live, 90);
+    expect(stepped.arena.step).toBe(90);
+    const direct = stepCombat(live, 90);
+    expect(stepped.arena).toEqual(direct);
+    const ended = stepBoss(stepped, stepped.arena, 30);
+    expect(ended.arena.step).toBe(120);
+  });
+
+  it("emits the standard clear outcome exactly once when the last boss row falls", () => {
+    const runtime = createBossCombatState(catalog, bossContext({ density: 0 }));
+    const core = runtime.arena.enemies.find(
+      (enemy) => enemy.instanceId === bossCoreIdFor(BOSS_EVENT_KEY),
+    )!;
+    const nearlyCleared: CombatState = {
+      ...runtime.arena,
+      phase: "live",
+      // Every shield node has already fallen; the core holds its final hit.
+      enemies: runtime.arena.enemies.map((enemy) =>
+        enemy.instanceId.startsWith(BOSS_EVENT_KEY + ":boss:node:")
+          ? { ...enemy, defeated: true, health: 0 }
+          : enemy.instanceId === core.instanceId
+            ? { ...enemy, health: 1 }
+            : enemy,
+      ),
+      balls: [
+        Object.freeze({
+          x: core.x,
+          y: core.y + core.halfHeight + 1,
+          vx: 0,
+          vy: -48,
+          attached: false,
+        }),
+      ],
+    };
+    let current = nearlyCleared;
+    let clearSeen = false;
+    for (let index = 0; index < 200 && !clearSeen; index += 1) {
+      current = stepCombat(current, 10);
+      clearSeen = current.outcome?.kind === "clear";
+    }
+    expect(clearSeen).toBe(true);
+    expect(current.phase).toBe("resolved");
+    expect(current.outcome!.outcomeId).toBe(outcomeIdFor(BOSS_EVENT_KEY, "clear", 0));
+    expect(stepCombat(current, 10)).toBe(current);
+    expect(deriveBossProjection(runtime.definition, current).defeated).toBe(true);
+  });
+
+  it("keeps loss semantics intact: the loss ledger and pre-launch restore persist", () => {
+    const runtime = createBossCombatState(catalog, bossContext({ density: 0 }));
+    let current = launchBall(movePaddle(runtime.arena, 20), 0.5);
+    let sawLoss = false;
+    for (let index = 0; index < 40 && !sawLoss; index += 1) {
+      current = stepCombat(current, 30);
+      sawLoss = current.outcome?.kind === "loss_of_ball";
+    }
+    expect(sawLoss).toBe(true);
+    expect(current.phase).toBe("pre_launch");
+    expect(current.losses).toBe(1);
+    expect(current.outcome!.outcomeId).toBe(
+      outcomeIdFor(BOSS_EVENT_KEY, "loss_of_ball", 0),
+    );
+  });
+
+  it("recomposes the anatomy deterministically after a loss restore", () => {
+    const runtime = createBossCombatState(catalog, bossContext({ lossCount: 1 }));
+    const runtimeAgain = createBossCombatState(
+      catalog,
+      bossContext({ lossCount: 1 }),
+    );
+    expect(runtimeAgain).toEqual(runtime);
+    expect(runtime.arena.losses).toBe(1);
+  });
+
+  it("applies selected modifiers to the composed arena and fails closed on unknown ones", () => {
+    const runtime = createBossCombatState(
+      catalog,
+      bossContext({
+        modifierIds: [
+          asContentId("boss-modifier-split-lane"),
+          asContentId("boss-modifier-unknown"),
+        ],
+      }),
+    );
+    expect(runtime.arena.hazards).toHaveLength(3);
+    expect(runtime.appliedModifiers.map((entry) => entry.modifierId)).toEqual([
+      "boss-modifier-split-lane",
+    ]);
+    expect(runtime.ignoredModifiers).toEqual([
+      { modifierId: "boss-modifier-unknown", reason: "unknown-modifier" },
+    ]);
+  });
+
+  it("projects phase transitions from the stepped volley state", () => {
+    const runtime = createBossCombatState(catalog, bossContext({ density: 0 }));
+    const steppedArena = {
+      ...runtime.arena,
+      enemies: runtime.arena.enemies.map((enemy) =>
+        enemy.instanceId === bossCoreIdFor(BOSS_EVENT_KEY)
+          ? { ...enemy, health: 2 }
+          : enemy,
+      ),
+    };
+    const stepped = stepBoss(runtime, steppedArena, 0);
+    expect(stepped.projection.phaseId).toBe("breach");
+    expect(stepped.projection.transitionCondition).toBe(
+      "Warden falls below 40% integrity",
+    );
   });
 });
