@@ -35,6 +35,20 @@
   .route-cards {
     grid-template-columns: repeat(2, 1fr);
   }
+
+  /* Combat: rail drops below the arena as a compact strip. */
+  .combat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .side-stack {
+    grid-template-columns: repeat(2, 1fr);
+    align-items: start;
+  }
+
+  .arena-panel__field {
+    min-height: 0;
+  }
 }
 
 /* Portrait phone (<= 720px): 56px bar, 16px gutters, urgent run state first,
@@ -168,6 +182,37 @@
     padding: var(--space-8);
   }
 
+  /* Combat: single column with the arena first and a stacked rail. */
+  .combat-grid {
+    gap: var(--space-12);
+  }
+
+  .side-stack {
+    grid-template-columns: 1fr;
+  }
+
+  /* The playable field keeps a stable portrait aspect on phones. */
+  .arena-panel__field {
+    aspect-ratio: 4 / 5;
+  }
+
+  .arena-panel {
+    padding: var(--space-12);
+  }
+
+  .arena-panel__controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .arena-panel__controls .action-button {
+    width: 100%;
+  }
+
+  .arena-skill {
+    grid-template-columns: 29px 1fr auto;
+  }
+
   /* Room shop: single column on phones. */
   .room-shop {
     grid-template-columns: 1fr;
@@ -232,5 +277,15 @@
 
   .reward-card--selected {
     box-shadow: none;
+  }
+}
+
+/* Reduced motion: arena/banners render no animation, so static state text,
+   borders, and glyphs survive — asserted in the component tests. */
+@media (prefers-reduced-motion: reduce) {
+  .arena-panel__canvas,
+  .telegraph-banner,
+  .arena-status {
+    animation: none;
   }
 }

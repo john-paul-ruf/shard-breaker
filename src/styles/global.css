@@ -1135,23 +1135,6 @@ button:focus-visible,
   line-height: 1.5;
 }
 
-/* Combat placeholder: muted deferral with the advance action disabled. */
-.room-combat-placeholder {
-  margin-top: var(--space-24);
-  padding: var(--space-16);
-  border: 1px dashed var(--line-translucent);
-  border-left: 3px solid var(--color-signal-amber);
-  border-radius: var(--radius-control);
-  background: rgb(255 200 87 / 5%);
-}
-
-.room-combat-placeholder p {
-  margin-top: var(--space-8);
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .room-actions {
   display: flex;
   justify-content: flex-end;
@@ -1509,4 +1492,393 @@ button:focus-visible,
 
 .reward-confirm-bar__readout b {
   color: var(--color-text-primary);
+}
+
+/*
+ * Combat screen composition. The arena hosts the Canvas field with its DOM
+ * status/controls (the arch M06 contract: nothing essential is canvas-only);
+ * the decision rail pairs the objective, skill charges, and telegraph with
+ * the clear-gated advance action. State is text + border + icon, never color
+ * alone (CA-08).
+ */
+
+.combat-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  gap: var(--space-16);
+  align-items: start;
+}
+
+.combat-grid,
+.arena-panel,
+.arena-panel__top {
+  min-width: 0;
+}
+
+.arena-panel {
+  padding: var(--space-16);
+}
+
+.arena-panel__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding-bottom: var(--space-16);
+  border-bottom: 1px solid var(--line-translucent);
+}
+
+.arena-panel__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.arena-panel__label::before {
+  width: 9px;
+  height: 9px;
+  content: "";
+  background: var(--color-signal-magenta);
+  box-shadow: var(--glow-magenta);
+  transform: rotate(45deg);
+}
+
+/* Status chip: state via text + glyph + border token, never color alone. */
+.arena-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8);
+  border: 1px solid rgb(255 200 87 / 42%);
+  border-radius: var(--radius-control);
+  color: var(--color-signal-amber);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.arena-status__icon {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.arena-status[data-status="ball-live"] {
+  border-color: rgb(84 246 209 / 45%);
+  color: var(--color-signal-cyan);
+}
+
+.arena-status[data-status="loss"] {
+  border-color: rgb(255 94 113 / 55%);
+  color: var(--color-signal-danger);
+}
+
+.arena-status[data-status="clear"] {
+  border-color: rgb(84 246 209 / 45%);
+  color: var(--color-signal-cyan);
+}
+
+.arena-panel__field {
+  position: relative;
+  aspect-ratio: 8 / 5;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: var(--space-16);
+  border: 1px solid rgb(84 246 209 / 36%);
+  border-radius: var(--radius-control);
+  background-color: #080f1a;
+  background-image:
+    linear-gradient(rgb(84 246 209 / 5.5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(84 246 209 / 5.5%) 1px, transparent 1px),
+    radial-gradient(ellipse at 50% 70%, rgb(84 246 209 / 12%), transparent 58%);
+  background-size: 32px 32px, 32px 32px, auto;
+  box-shadow: inset 0 0 50px rgb(2 5 12 / 80%);
+}
+
+.arena-panel__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Field guidance sits beside the canvas without covering it. */
+.arena-panel__fieldnote {
+  margin-top: var(--space-8);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.arena-panel__telegraph {
+  margin-top: var(--space-12);
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid rgb(255 200 87 / 42%);
+  border-left: 3px solid var(--color-signal-amber);
+  border-radius: var(--radius-control);
+  background: rgb(255 200 87 / 6%);
+  color: var(--color-signal-amber);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.arena-panel__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  margin-top: var(--space-12);
+}
+
+.arena-panel__hint {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10px;
+  line-height: 1.45;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Skill rail: charges read as numbers beside the label; disabled skills
+   carry a visible reason, so the disabled state is more than dimming. */
+.arena-skills {
+  display: grid;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+
+.arena-skill {
+  display: grid;
+  grid-template-columns: var(--space-32) 1fr auto;
+  gap: var(--space-12);
+  align-items: center;
+  min-height: var(--size-action-target);
+  padding: var(--space-12);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-control);
+  background: rgb(20 30 48 / 55%);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.arena-skill:disabled {
+  border-style: dashed;
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.arena-skill:not(:disabled):hover {
+  border-color: rgb(84 246 209 / 60%);
+}
+
+.arena-skill__key {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  place-items: center;
+  border: 1px solid var(--color-signal-cyan);
+  color: var(--color-signal-cyan);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 10px;
+}
+
+.arena-skill__info b {
+  display: block;
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.arena-skill__info span {
+  display: block;
+  margin-top: var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.arena-skill__reason {
+  color: var(--color-signal-amber) !important;
+}
+
+.arena-skill__charges {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.arena-skill__charges em {
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+  font-style: normal;
+}
+
+/* Decision rail. */
+.side-stack {
+  display: grid;
+  gap: var(--space-12);
+  align-content: start;
+}
+
+.side-panel {
+  padding: var(--space-16);
+}
+
+.side-panel h2 {
+  margin-top: var(--space-8);
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+.side-panel__objectives {
+  margin: var(--space-16) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.side-panel__objectives li {
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--line-translucent);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.side-panel__integrity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+
+.side-panel__integrity span {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.side-panel__skillnote {
+  margin-top: var(--space-8);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.side-panel__passive {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  margin-top: var(--space-12);
+  padding-top: var(--space-12);
+  border-top: 1px solid var(--line-translucent);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.side-panel__passive b {
+  color: var(--color-signal-violet);
+}
+
+.combat-actions {
+  margin-top: var(--space-16);
+  padding-top: var(--space-16);
+  border-top: 1px solid var(--line-translucent);
+}
+
+.combat-actions .action-button {
+  width: 100%;
+}
+
+.combat-actions__reason {
+  margin-top: var(--space-8);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Telegraph banner: the tone pair changes text, left border, and icon glyph
+   together; nothing animates, so reduced motion never removes the state. */
+.telegraph-banner {
+  padding: var(--space-16);
+  border: 1px solid rgb(255 200 87 / 46%);
+  border-left: 3px solid var(--color-signal-amber);
+  border-radius: var(--radius-control);
+  background: rgb(255 200 87 / 7%);
+  color: var(--color-signal-amber);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.telegraph-banner[data-tone="active"] {
+  border-color: rgb(251 63 182 / 46%);
+  border-left-color: var(--color-signal-magenta);
+  background: rgb(251 63 182 / 7%);
+  color: var(--color-signal-magenta);
+}
+
+.telegraph-banner[data-tone="resolved"] {
+  border-color: rgb(84 246 209 / 45%);
+  border-left-color: var(--color-signal-cyan);
+  background: rgb(84 246 209 / 6%);
+  color: var(--color-signal-cyan);
+}
+
+.telegraph-banner__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.telegraph-banner__icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.telegraph-banner__detail {
+  margin-top: var(--space-8);
+  color: var(--color-text-secondary);
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0.04em;
+  text-transform: none;
 }

@@ -116,11 +116,12 @@ function createClockHarness(): {
 // paddle's world-space fill becomes observable.
 
 const recordedRects: Array<[number, number, number, number]> = [];
-let contextCanvas: { width: number; height: number } = { width: 0, height: 0 };
 
 const recordingContext: Context2DLike = {
+  // The context must report the mounted canvas's live dimensions: draw()
+  // resizes the element before drawFrame computes the world transform.
   get canvas() {
-    return contextCanvas;
+    return document.querySelector("canvas") ?? { width: 0, height: 0 };
   },
   save: () => undefined,
   restore: () => undefined,
@@ -173,12 +174,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   recordedRects.length = 0;
-  contextCanvas = { width: 0, height: 0 };
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(
-    function getContext(this: HTMLCanvasElement) {
-      contextCanvas = this;
-      return recordingContext as unknown as CanvasRenderingContext2D;
-    },
+    () => recordingContext as unknown as CanvasRenderingContext2D,
   );
 });
 
