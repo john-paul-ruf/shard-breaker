@@ -80,6 +80,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Added the controlled accessible launch archive and restored-checkpoint composition. |
+| 2026-09-24 | combat-engine SESSION-04: Added CombatScreen, room-combat derivation, App combat model; removed the RoomScreen combat branch and placeholder. |
 | 2026-08-29 | Imported Genesis M08 and screen design contracts into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-02: Added RouteMapScreen with catalog-resolved display, auto-materialize, radiogroup of RouteCards, commit bar, side panel. |
 
@@ -118,3 +119,31 @@
   enhancement labels, replacement preview) are resolved inside the screen via
   the replace-earliest rule (`activeSkillIds[0]` / `passiveEquipmentIds[0]` at
   caps 3/4), because S02's applied `RewardState` is never durable.
+
+
+<!-- combat-engine SESSION-04 -->
+## Combat room screen (combat-engine SESSION-04)
+
+- `src/ui/screens/CombatScreen.tsx` (new) — exports `CombatScreenViewModel`,
+  `CombatScreenProps`, `CombatScreen`: status bar, room header
+  (`{roomName} // {type}`), stats row (depth/cycle/integrity/room shards), the
+  `<Arena>` panel, and the decision rail (objective list resolved through the
+  catalog-facade pattern, integrity meter, skill-charge note, passive summary,
+  save signal, telegraph banner projected from the durable checkpoint's pending
+  hazard, and `Advance to reward draft` dispatching `room/resolve`, gated on
+  `hasClearOutcome` — the reducer rejects an unresolved combat room).
+- `src/app/navigation.ts` — `ScreenDescriptor` gains `{ id: "room-combat" }`;
+  `deriveScreen` returns it for room-phase runs whose `roomState.roomType` is
+  battle/elite/boss, keeping `{ id: "room" }` for utility rooms.
+- `src/app/App.tsx` — `createCombatModel(state, catalog)` mirrors
+  `createRoomModel`: catalog-resolved skill display from
+  `checkpoint.skillCharges`, passive summary, the clear-outcome gate, a telegraph
+  projection from the checkpoint's pending hazard, and the two Arena closures —
+  `createInitialState` (`fromCombatCheckpoint` over run/room context) and
+  `resolveVolleyEffects` (SESSION-02's production resolver closed over
+  catalog/build/charges with the empty `ROLLED_PARAMS_CARRIER_LANDING` params per
+  the recorded deferral; the durable carrier is CA-13/S07 planning scope).
+- `src/ui/screens/RoomScreen.tsx` — combat branch removed (`isCombatRoom`,
+  placeholder markup, and `RoomScreenViewModel.isBossRoom` deleted with the two
+  placeholder test rows); utility-room behavior untouched. 10 CombatScreen tests,
+  15 App rows (derivation + composition), RoomScreen 10 (−2 placeholders).

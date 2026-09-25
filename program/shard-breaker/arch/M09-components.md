@@ -76,6 +76,7 @@
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Added controlled status, Integrity, overwrite-confirmation, and save-feedback primitives. |
+| 2026-09-24 | combat-engine SESSION-04: Added TelegraphBanner (text+border+icon tone states, reduced-motion static). |
 | 2026-08-29 | Imported Genesis M09 contract into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-02: Added RouteCard accessible radio component with catalog-resolved display. |
 
@@ -98,3 +99,17 @@
   display fields (no catalog access inside the component); glyph by rewardType,
   enhancement block, material cost, trade-off row, replacement disclosure,
   44px targets, roving-focus radio keyboard.
+
+
+<!-- combat-engine SESSION-04 -->
+## Telegraph banner (combat-engine SESSION-04)
+
+- `src/ui/components/TelegraphBanner.tsx` (new) — exports `TelegraphTone =
+  "incoming" | "active" | "resolved"`, `TelegraphBannerProps { title; detail;
+  tone }`, `TelegraphBanner`. State is text + left border + icon glyph +
+  `data-tone` together — never color-only (CA-08); fully static (no animation),
+  so reduced-motion preferences never remove state. `aria-label` pairs the tone
+  label with the title. Rows live in `lifecycleComponents.test.tsx` (+5 tests,
+  including a reduced-motion static-text row).
+- Consumers: SESSION-05 BossScreen (CA-10 countdown text is boss-machine scope,
+  projected through this banner).

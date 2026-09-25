@@ -47,6 +47,7 @@ tokens, but CSS does not import application modules.
 
 | Date | Change |
 |------|--------|
+| 2026-09-24 | combat-engine SESSION-04: Added combat arena/rail styles and responsive reflow; removed orphaned placeholder styles. |
 | 2026-08-29 | Imported Genesis M10 and design-token contracts into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-02: Added route-map styles (global.css) and responsive rules (responsive.css). |
 
@@ -148,3 +149,14 @@ never color alone.
   using tokens only; state never color-only.
 - `responsive.css` — ≤980px horizontal-scroll card row + 2-col shop,
   ≤720px stacked cards/shop/bars, reduced-motion disables hover transforms.
+
+
+<!-- combat-engine SESSION-04 -->
+## Combat arena styles (combat-engine SESSION-04)
+
+- `global.css` — combat-grid/arena-panel/arena-status/arena-skill/side-stack/
+  side-panel/combat-actions/telegraph-banner BEM blocks (tokens only); removed
+  the orphaned `.room-combat-placeholder` styles.
+- `responsive.css` — ≤1023 rail below arena (2-col strip), ≤720 single column
+  with stable 4/5 arena aspect and stacked controls, reduced-motion
+  `animation: none` row for arena/banner surfaces.

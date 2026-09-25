@@ -58,6 +58,7 @@
 
 | Date | Change |
 |------|--------|
+| 2026-09-24 | combat-engine SESSION-04: created Arena.tsx (canvas host, DOM status/telegraph, CA-07 launch control, skill rail) — see the fragment below. |
 | 2026-08-29 | Imported Genesis M06 contract into the Forge registry. |
 | 2026-09-23 | combat-engine SESSION-03: created `src/game/` (engine/input/session/renderer) — see the fragment below. `Arena.tsx` remains for SESSION-04. |
 
@@ -140,3 +141,34 @@ only as a clock; zero `Math.random`/`Date.now`; frames are never persisted.
 annotations (config default stays node). Consumers: S04 `Arena.tsx`
 (CAP-05/CAP-07 integration checkpoints remain future owners), S07 browser
 journeys.
+
+
+<!-- combat-engine SESSION-04 -->
+## Arena host (combat-engine SESSION-04)
+
+New public API in `src/game/Arena.tsx` (this file's registry row is M10):
+
+- `ArenaSkillDisplay { skillId: SkillId; name; description; charges; maximum }`.
+- `ArenaViewModel { roomName; skillDisplay: readonly ArenaSkillDisplay[]; isBusy }` —
+  deliberately narrow: run/room context stays with the composing screen, and the
+  durable `CombatCheckpoint` never crosses into `src/game/` as data.
+- `ArenaProps { model: ArenaViewModel; dispatch(command: AppCommand);
+  createInitialState: () => CombatState; resolveVolleyEffects: VolleyEffectsResolver;
+  sessionOptions?: { engine?: EngineOptions; clock?: FrameClock } }` — the
+  checkpoint→state reconstruction (CA-03) and the per-volley effect resolver are
+  injected closures from App.tsx; `sessionOptions` exists for deterministic tests.
+- `Arena` composes `createGameSession`: mounts the session from
+  `createInitialState()`, feeds `onRender` into DPR-scaled `drawFrame` (with the
+  pre-launch aim-indicator override), and renders the essential state as DOM
+  siblings of the canvas — status line (`role="status"` + `data-status` + glyph),
+  live hazard telegraph, launch control ("Launch ball", 44px, disabled while busy
+  or not pre-launch, sole dispatcher of `combat/launch` — CA-07), and the skill
+  rail (charges + disabled-at-zero + `combat/use-skill` via `session.useSkill`).
+  Pointer/keyboard input routes through `attachInput` (pointer never launches).
+  After a loss outcome the reconcile effect swaps in the durable restore publish
+  (`replaceState(createInitialState())`); a live volley and a clear are never
+  swapped. Realizes M07→M10 [D→R] (CombatScreen imports Arena) and M06→M10
+  [D→R] (App composes Arena via the screen). `App.tsx` realizes the M06→M09
+  [D→R] edge App-side via the `createInitialState` closure (`fromCombatCheckpoint`).
+- 14 component tests incl. the deterministic loss volley (−0.6 aim from paddle 80)
+  recorded by SESSION-03; jsdom canvas `getContext` stderr is expected noise.
