@@ -150,12 +150,29 @@ not mutate domain state or call IndexedDB directly.
   Recorded for Planner as a small cleanup/facade follow-up (STATE.md Current
   Blockers).
 
+
+<!-- run-summary-metaprogression SESSION-01 -->
+## Terminal command surface and store publish (run-summary-metaprogression SESSION-01)
+
+- `src/app/commands.ts`: `AppCommand` gains `{ type: "terminal/resolve-relic";
+  relicId: ContentId | null }` (durable; added to `isDurableCommand`).
+- `src/app/appStore.ts`: `AppState` gains `terminalRecord: TerminalRecordView | null`
+  where `interface TerminalRecordView { isRecord: boolean; priorRecordDepth: number }`
+  — a transient projection computed by the finalize handler from the PRE-finalization
+  snapshot (`livingRun.depth > profile.records.highestReachedDepth`), published with
+  the finalized profile, cleared on resolve/decline/initialize/failure. Finalize save
+  signal names the Shards (`Run lost. +N shards banked to the archive.`). New handler
+  `handleTerminalResolveRelic` (reducer → repository → fresh profile publish,
+  catalog-resolved display name in the signal). `runRejectionMessage` covers the two
+  new domain rejection codes (`no-pending-relic-choice`, `unknown-relic-choice`).
+
 ## Change History
 
 | Date | Change |
 |------|--------|
 | 2026-09-24 | combat-engine SESSION-05: Added the room-boss screen branch and boss model builder. |
 | 2026-09-24 | combat-engine SESSION-04/07: Added the room-combat screen branch, combat model builder, combat app command surface, and the CA-13 banked-currency save signal. |
+| 2026-09-25 | run-summary-metaprogression SESSION-01: App command surface gains `terminal/resolve-relic` + handler + transient `terminalRecord` publish — see the fragment below. |
 | 2026-08-29 | Imported deep-file contract into the Forge registry. |
 | 2026-08-29 | Added the serialized durable application store, launch navigation, React binding, and browser composition root. |
 | 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |

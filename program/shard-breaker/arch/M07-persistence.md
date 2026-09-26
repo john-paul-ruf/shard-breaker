@@ -58,11 +58,31 @@
   rollback, revisions, retries, finalization, abandon/reset, invalid records,
   canonical export/digest, malicious/oversized imports, and living-run isolation.
 
+
+<!-- run-summary-metaprogression SESSION-01 -->
+## Terminal shards award and the resolve-relic capability (run-summary-metaprogression SESSION-01)
+
+- `envelopes.ts`: `RunLifecycleRepository` gains REQUIRED `resolveRelicChoice(
+  instruction: ResolveRelicChoicePersistenceInstruction): Promise<PersistenceResult<RunState>>`
+  (exported instruction type = `Extract<RunPersistenceInstruction, { kind:
+  "resolve-relic-choice" }>`). `FinalizeDeathPersistenceInstruction` now carries
+  `pendingRelicChoice` (flows from the domain type).
+- `repositories.ts`: `proposalFromInstruction` adds `shards: storedProfile.shards +
+  summary.shardsEarned` and `pendingRelicChoice: instruction.pendingRelicChoice ??
+  storedProfile.pendingRelicChoice`; the proposed profile still validates through
+  `parseProfileRecord` before any write. New `resolveRelicChoice`: one `profile`
+  read/write transaction — parse stored profile → `stale-profile-revision` revision
+  guard → reject resolved/mismatched pending (`invalid-profile`, cause field
+  `pendingRelicChoice`) → re-validate the proposed profile and its revision advance
+  → commit. Retry after resolution rejects without changes. Existing
+  `expectedFailure`/`transactionFailure` vocabulary reused; no new error codes.
+
 ## Change History
 
 | Date | Change |
 |------|--------|
 | 2026-09-24 | combat-engine SESSION-07 + OWNER-FINALIZE-REPO: added the finalizeDeath one-transaction terminal boundary (sanctioned scoped seam), then tightened it to a required repository capability (`97553fd`) — see the fragment below. |
+| 2026-09-25 | run-summary-metaprogression SESSION-01: Finalize proposal gains the Shards award + pending relic choice; new required `resolveRelicChoice` one-transaction capability — see the fragment below. |
 | 2026-08-29 | Imported Genesis M07 and database contracts into the Forge registry. |
 | 2026-08-29 | Added the run-lifecycle repository, v1 envelope validation, and migration-backed database opening. |
 | 2026-09-14 | route-drafting SESSION-01: Added saveCheckpoint repository method and SaveCheckpointPersistenceInstruction for atomic checkpoint persistence. |

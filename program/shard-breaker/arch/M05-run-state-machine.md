@@ -62,11 +62,39 @@
   materialized state, arbitrary safe depths, record rules, Shard calculation,
   and terminal/abandon distinctions.
 
+
+<!-- run-summary-metaprogression SESSION-01 -->
+## Terminal economy, relic pipeline, boss counters (run-summary-metaprogression SESSION-01)
+
+- `reducer.ts` exports (public API): `SHARDS_PER_DEPTH = 20`, `SHARDS_PER_BOSS = 50`,
+  `terminalShardAward(summary: Pick<RunSummarySnapshot, "reachedDepth" |
+  "bossesDefeated">): number` — beside `battleCurrencyGrant`. Applied in
+  `deathTransition` (`shardsEarned`), which also emits
+  `persistence.pendingRelicChoice` (sourceRunId = dying run's ID, options =
+  `RELIC_DEFINITIONS` order, `selectedId`/`commitId` null — exactly the four
+  committed schema fields).
+- Boss counters (CA-17): `commitRoute` increments `progress.bossesReached` when the
+  committed candidate is a boss room; `reportCombatOutcome`'s clear branch increments
+  `progress.bossesDefeated` for a boss room (CA-02 ledger once-only). Non-boss rooms
+  unchanged; validation coherence `bossesDefeated <= bossesReached` holds.
+- `commands.ts`: `RunCommand` gains `{ type: "ResolveRelicChoice"; relicId:
+  ContentId | null; expectedProfileRevision: number; commitId: string; now: number }`.
+  `RunRejection` gains `no-pending-relic-choice` and `unknown-relic-choice { relicId }`
+  (reuses `stale-profile-revision`). `RunPersistenceInstruction` gains:
+  `finalize-death.pendingRelicChoice` (additive) and a new `{ kind:
+  "resolve-relic-choice"; relicId; commitId; expectedProfileRevision; proposedProfile }`.
+- `validation.ts`: new profile coherence rule `pending-relic-choice-run-mismatch` —
+  when both present, `pendingRelicChoice.sourceRunId === lastFinalizedRunId`.
+  RESOLVE keeps the pending record with `selectedId`+`commitId` set (schema
+  `selectedId ⟺ commitId` coherence) and unlocks+equips in ONE profile mutation;
+  DECLINE clears the pending choice and leaves `relicState` untouched.
+
 ## Change History
 
 | Date | Change |
 |------|--------|
 | 2026-09-24 | combat-engine SESSION-07: Added battleCurrencyGrant (CA-13 seeded clear-time currency rule) and the finalize-death transition replacing the interim loss-at-0 rejection (CAP-12) — see the fragment below. |
+| 2026-09-25 | run-summary-metaprogression SESSION-01: Added the terminal Shards rule (`terminalShardAward`), boss progress counter producers, and the `ResolveRelicChoice` command/transition/instruction — see the fragment below. |
 | 2026-08-29 | Imported Genesis M05 contract into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-01: Added MaterializeRoute/SelectRouteOffer/CommitRoute commands, reducer transitions with generator-to-snapshot mapping, save-checkpoint persistence instruction. |
 | 2026-09-22 | room-resolution SESSION-02: Added BuyShopItem/CommitRecovery/ResolveRoom/SelectReward commands, four reducer transitions with generator-to-snapshot mapping, RewardState replacement fields, and ten new rejection codes. |

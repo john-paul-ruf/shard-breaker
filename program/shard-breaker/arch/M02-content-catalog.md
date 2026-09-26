@@ -58,11 +58,27 @@
 - Snapshot only stable authored data where a semantic assertion would be less
   clear; do not use snapshots as the sole validation of invariants.
 
+
+<!-- run-summary-metaprogression SESSION-01 -->
+## Relic content and catalog facade (run-summary-metaprogression SESSION-01)
+
+- `relics.ts` (new) — `interface RelicDefinition { id: ContentId; displayName:
+  string; cappedDescription: string }` and `RELIC_DEFINITIONS: readonly
+  RelicDefinition[]` (frozen; three entries `relic-backfeed-cell`,
+  `relic-quiet-prism`, `relic-spare-vector`, authored registry order,
+  mock-verbatim copy). Registered in `createContentCatalog` through the existing
+  `registerKnownId` loop.
+- `ContentCatalog` interface widened (public API): `listRelics(): readonly
+  RelicDefinition[]`, `getRelic(id): ContentLookupResult<RelicDefinition>` (the
+  same `lookup` pattern as the other categories). No import-direction change:
+  M03/M06 already read M01.
+
 ## Change History
 
 | Date | Change |
 |------|--------|
 | 2026-09-24 | combat-engine SESSION-05: Added boss combat content (4 archetypes: phases/telegraphs/counterplay/capped modifiers) and full BossDefinition catalog lookups — see the fragment below. |
+| 2026-09-25 | run-summary-metaprogression SESSION-01: Added relic content (`relics.ts`, 3 authored relics) and `listRelics`/`getRelic` catalog facade — see the fragment below. |
 | 2026-08-29 | Imported Genesis M02 contract into the Forge registry. |
 | 2026-08-30 | Added `content-1` route rooms, support IDs, bounded Integrity services, boss routing identities, and total catalog lookups. |
 | 2026-09-15 | room-resolution SESSION-01: Added reward content (8 skills, 8 equipment items, 14 enhancements) and total catalog lookups for all three types. |
