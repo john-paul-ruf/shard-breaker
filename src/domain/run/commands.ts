@@ -1,5 +1,5 @@
 import type { ContentId } from "../content/catalog";
-import type { RunState, RunSummarySnapshot } from "./model";
+import type { PendingRelicChoice, Profile, RunState, RunSummarySnapshot } from "./model";
 
 /** Serializable loss/clear report the bridge sends; no frame data crosses. */
 export interface CombatOutcomeMessage {
@@ -103,6 +103,13 @@ export type RunCommand =
       readonly cardId: string;
       readonly commitId: string;
       readonly now: number;
+    }
+  | {
+      readonly type: "ResolveRelicChoice";
+      readonly relicId: ContentId | null;
+      readonly expectedProfileRevision: number;
+      readonly commitId: string;
+      readonly now: number;
     };
 
 /** Room types a room-scoped rejection can name. */
@@ -140,7 +147,9 @@ export type RunRejection =
   | { readonly code: "unknown-outcome-id"; readonly outcomeId: string }
   | { readonly code: "duplicate-outcome-id"; readonly outcomeId: string }
   | { readonly code: "reward-already-selected"; readonly status: "selected" | "applied" }
-  | { readonly code: "unknown-reward-card"; readonly cardId: string };
+  | { readonly code: "unknown-reward-card"; readonly cardId: string }
+  | { readonly code: "no-pending-relic-choice" }
+  | { readonly code: "unknown-relic-choice"; readonly relicId: ContentId };
 
 /**
  * Durable write intent emitted alongside a successful transition so adapters
@@ -173,6 +182,24 @@ export type RunPersistenceInstruction =
       readonly expectedRevision: number;
       /** The terminal summary the repository records in one transaction. */
       readonly summary: RunSummarySnapshot;
+      /**
+       * The terminal's one bounded carry-over choice (CA-18): emitted with
+       * every death finalization so the choice resolves after the living run
+       * is deleted.
+       */
+      readonly pendingRelicChoice: PendingRelicChoice;
+    }
+  | {
+      readonly kind: "resolve-relic-choice";
+      readonly relicId: ContentId | null;
+      readonly commitId: string;
+      readonly expectedProfileRevision: number;
+      /**
+       * The already-validated proposed profile the reducer produced; the
+       * repository applies exactly this record inside its one transaction
+       * (the same trust pattern as a proposed run).
+       */
+      readonly proposedProfile: Profile;
     };
 
 export type RunTransition =

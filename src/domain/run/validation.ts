@@ -175,6 +175,21 @@ function collectProfileIssues(
       "lastFinalizedRunId must be non-empty when present",
     );
   }
+
+  // The pending choice belongs to the terminal run the profile already
+  // recorded: when both references are present they must name the same run,
+  // so a pending record can never outlive or precede its terminal.
+  if (
+    profile.pendingRelicChoice !== null &&
+    profile.lastFinalizedRunId !== null
+  ) {
+    collector.require(
+      profile.pendingRelicChoice.sourceRunId === profile.lastFinalizedRunId,
+      "pending-relic-choice-run-mismatch",
+      "profile.pendingRelicChoice.sourceRunId",
+      "a pending relic choice must reference the last finalized run",
+    );
+  }
 }
 
 function collectBuildIssues(collector: IssueCollector, build: BuildSnapshot): void {

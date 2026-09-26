@@ -151,6 +151,10 @@ function runRejectionMessage(error: RunRejection): string {
       return "A reward has already been selected from this draft.";
     case "unknown-reward-card":
       return "The selected reward card is not part of the current draft.";
+    case "no-pending-relic-choice":
+      return "There is no unresolved carry-over relic choice to resolve.";
+    case "unknown-relic-choice":
+      return "That carry-over relic is not part of the pending choice.";
   }
 }
 

@@ -11,7 +11,9 @@ import {
   CURRENT_RECORD_KEY,
   SAVE_SCHEMA_VERSION,
 } from "./model";
+import { terminalShardAward } from "./reducer";
 import { createInitialRouteState, cycleForDepth, isValidDepth } from "./routes";
+import { RELIC_DEFINITIONS } from "../content/relics";
 import { validateLivingRun, validateProfile, validateRunState } from "./validation";
 
 const catalog = createContentCatalog();
@@ -417,5 +419,231 @@ describe("runReducer — AbandonRun", () => {
     if (!transition.ok) {
       expect(transition.error).toEqual({ code: "invalid-metadata", field });
     }
+  });
+});
+
+describe("CA-16/CA-18 — terminal economy and relic choice", () => {
+  function profileWithPendingChoice(): Profile {
+    return {
+      ...makeProfile(),
+      lastRunSummary: {
+        runId: "run-1",
+        classId: GLITCH_KNIGHT,
+        reachedDepth: 1,
+        bossesReached: 0,
+        bossesDefeated: 0,
+        activeSkillIds: [],
+        passiveEquipmentIds: [],
+        carryOverRelicId: null,
+        shardsEarned: 20,
+        terminalReason: "death",
+        completedAt: 1_700_000_000_000,
+      },
+      lastFinalizedRunId: "run-1",
+      pendingRelicChoice: {
+        sourceRunId: "run-1",
+        options: RELIC_DEFINITIONS.map((definition) => definition.id),
+        selectedId: null,
+        commitId: null,
+      },
+    };
+  }
+
+  function resolveCommand(
+    overrides: Partial<Extract<RunCommand, { type: "ResolveRelicChoice" }>> = {},
+  ): RunCommand {
+    return {
+      type: "ResolveRelicChoice",
+      relicId: RELIC_DEFINITIONS[0]!.id,
+      expectedProfileRevision: 0,
+      commitId: "commit-relic",
+      now: 1_700_000_000_500,
+      ...overrides,
+    };
+  }
+
+  it("emits the pending choice with the death finalization in authored order", () => {
+    const transition = runReducer(
+      { profile: makeProfile(), livingRun: null },
+      resolveCommand(),
+      catalog,
+    );
+    // No pending choice before a terminal: the transition is rejected.
+    expect(transition.ok).toBe(false);
+    if (!transition.ok) {
+      expect(transition.error).toEqual({ code: "no-pending-relic-choice" });
+    }
+  });
+
+  it("resolves a choose into unlock + equip in one profile mutation", () => {
+    const profile = profileWithPendingChoice();
+    const transition = runReducer(
+      deepFreeze({ profile, livingRun: null }),
+      deepFreeze(resolveCommand()),
+      catalog,
+    );
+
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    const next = transition.state.profile;
+    expect(next.pendingRelicChoice).toEqual({
+      sourceRunId: "run-1",
+      options: RELIC_DEFINITIONS.map((definition) => definition.id),
+      selectedId: RELIC_DEFINITIONS[0]!.id,
+      commitId: "commit-relic",
+    });
+    expect(next.unlocks.relicIds).toContain(RELIC_DEFINITIONS[0]!.id);
+    expect(next.relicState).toEqual({ equippedForNextRunId: RELIC_DEFINITIONS[0]!.id });
+    expect(next.revision).toBe(profile.revision + 1);
+    expect(transition.state.livingRun).toBeNull();
+    expect(transition.persistence).toEqual({
+      kind: "resolve-relic-choice",
+      relicId: RELIC_DEFINITIONS[0]!.id,
+      commitId: "commit-relic",
+      expectedProfileRevision: 0,
+      proposedProfile: next,
+    });
+    expect(validateProfile(next, catalog)).toEqual({ ok: true });
+  });
+
+  it("replaces a previously equipped relic in the one slot", () => {
+    const previous = RELIC_DEFINITIONS[1]!.id;
+    const profile: Profile = {
+      ...profileWithPendingChoice(),
+      unlocks: {
+        ...profileWithPendingChoice().unlocks,
+        relicIds: [previous],
+      },
+      relicState: { equippedForNextRunId: previous },
+    };
+    const transition = runReducer(
+      { profile, livingRun: null },
+      resolveCommand(),
+      catalog,
+    );
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.profile.relicState).toEqual({
+      equippedForNextRunId: RELIC_DEFINITIONS[0]!.id,
+    });
+    expect([...transition.state.profile.unlocks.relicIds]).toEqual([
+      previous,
+      RELIC_DEFINITIONS[0]!.id,
+    ]);
+  });
+
+  it("declines by clearing the pending choice without touching relicState", () => {
+    const profile: Profile = {
+      ...profileWithPendingChoice(),
+      relicState: { equippedForNextRunId: RELIC_DEFINITIONS[2]!.id },
+      unlocks: {
+        ...profileWithPendingChoice().unlocks,
+        relicIds: [RELIC_DEFINITIONS[2]!.id],
+      },
+    };
+    const transition = runReducer(
+      deepFreeze({ profile, livingRun: null }),
+      deepFreeze(resolveCommand({ relicId: null })),
+      catalog,
+    );
+
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.profile.pendingRelicChoice).toBeNull();
+    expect(transition.state.profile.relicState).toEqual({
+      equippedForNextRunId: RELIC_DEFINITIONS[2]!.id,
+    });
+    expect(transition.state.profile.unlocks.relicIds).toContain(RELIC_DEFINITIONS[2]!.id);
+    expect(transition.persistence).toMatchObject({
+      kind: "resolve-relic-choice",
+      relicId: null,
+    });
+    expect(validateProfile(transition.state.profile, catalog)).toEqual({ ok: true });
+  });
+
+  it("rejects a resolved choice from resolving again (once-only)", () => {
+    const profile = profileWithPendingChoice();
+    const first = runReducer({ profile, livingRun: null }, resolveCommand(), catalog);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const second = runReducer(
+      first.state,
+      resolveCommand({
+        commitId: "commit-relic-2",
+        expectedProfileRevision: first.state.profile.revision,
+      }),
+      catalog,
+    );
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.error).toEqual({ code: "no-pending-relic-choice" });
+    }
+    expect(second.state).toBe(first.state);
+  });
+
+  it("rejects a choice outside the pending options", () => {
+    const transition = runReducer(
+      { profile: profileWithPendingChoice(), livingRun: null },
+      resolveCommand({ relicId: asContentId("relic-not-offered") }),
+      catalog,
+    );
+    expect(transition.ok).toBe(false);
+    if (!transition.ok) {
+      expect(transition.error).toEqual({
+        code: "unknown-relic-choice",
+        relicId: "relic-not-offered",
+      });
+    }
+  });
+
+  it("rejects a stale profile revision with StartRun's exact shape", () => {
+    const transition = runReducer(
+      { profile: profileWithPendingChoice(), livingRun: null },
+      resolveCommand({ expectedProfileRevision: 5 }),
+      catalog,
+    );
+    expect(transition.ok).toBe(false);
+    if (!transition.ok) {
+      expect(transition.error).toEqual({
+        code: "stale-profile-revision",
+        expected: 5,
+        actual: 0,
+      });
+    }
+  });
+
+  it("rejects resolve when no pending choice exists", () => {
+    const transition = runReducer(
+      { profile: makeProfile(), livingRun: null },
+      resolveCommand(),
+      catalog,
+    );
+    expect(transition.ok).toBe(false);
+    if (!transition.ok) {
+      expect(transition.error).toEqual({ code: "no-pending-relic-choice" });
+    }
+  });
+
+  it.each([
+    ["now", resolveCommand({ now: Number.NaN })],
+    ["commitId", resolveCommand({ commitId: "" })],
+    ["expectedProfileRevision", resolveCommand({ expectedProfileRevision: -1 })],
+  ])("rejects invalid metadata field %s", (field, command) => {
+    const transition = runReducer(
+      { profile: profileWithPendingChoice(), livingRun: null },
+      command,
+      catalog,
+    );
+    expect(transition.ok).toBe(false);
+    if (!transition.ok) {
+      expect(transition.error).toEqual({ code: "invalid-metadata", field });
+    }
+  });
+
+  it("carries the terminal Shards formula through the exported rule (CA-16)", () => {
+    // Depth-1/0-boss death = 20 (the S03 browser value).
+    expect(terminalShardAward({ reachedDepth: 1, bossesDefeated: 0 })).toBe(20);
+    expect(terminalShardAward({ reachedDepth: 3, bossesDefeated: 1 })).toBe(110);
   });
 });

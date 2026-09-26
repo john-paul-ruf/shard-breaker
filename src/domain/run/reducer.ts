@@ -1,4 +1,5 @@
 import type { ContentCatalog, ContentId, ContentVersion } from "../content/catalog";
+import { RELIC_DEFINITIONS } from "../content/relics";
 import type {
   GeneratedRewardCard,
   GeneratedRouteOffer,
@@ -22,6 +23,7 @@ import type {
   CombatCheckpoint,
   EffectParam,
   LivingRun,
+  PendingRelicChoice,
   Profile,
   RewardCardSnapshot,
   RewardState,
@@ -502,11 +504,22 @@ function commitRoute(
 
   const roomState = mapRoomCandidate(candidate);
 
+  // CA-17: materializing a boss room is the "reached" fact; the
+  // route-already-committed guard above makes it exactly once per room.
+  const progress =
+    roomState.roomType === "boss"
+      ? {
+          ...run.progress,
+          bossesReached: run.progress.bossesReached + 1,
+        }
+      : run.progress;
+
   const updatedRun: LivingRun = {
     ...run,
     phase: "room",
     routeState: null,
     roomState,
+    progress,
     revision: run.revision + 1,
     updatedAt: command.now,
     lastCommitId: command.commitId,
@@ -618,6 +631,37 @@ export function battleCurrencyGrant(
     : BATTLE_CURRENCY_MIN + draw.nextInt(BATTLE_CURRENCY_RANGE) + depthBonus;
 }
 
+/** Terminal Shards per reached depth (CA-16). */
+export const SHARDS_PER_DEPTH = 20;
+/** Terminal Shards per defeated boss (CA-16). */
+export const SHARDS_PER_BOSS = 50;
+
+/**
+ * The terminal Shards award (CA-16): a visible, deterministic pure function
+ * of the terminal summary's own facts — no stream, no reroll. Exported
+ * beside `battleCurrencyGrant` so the economy rule stays testable and the
+ * summary, the profile award, and the browser assertions all name one rule.
+ */
+export function terminalShardAward(
+  summary: Pick<RunSummarySnapshot, "reachedDepth" | "bossesDefeated">,
+): number {
+  return SHARDS_PER_DEPTH * summary.reachedDepth + SHARDS_PER_BOSS * summary.bossesDefeated;
+}
+
+/**
+ * The pending carry-over choice every death finalization emits (CA-18): the
+ * catalog's authored relics in registry order, nothing selected yet. The
+ * committed `pendingRelicChoiceSchema` is the authority for this shape.
+ */
+function pendingRelicChoiceFor(runId: string): PendingRelicChoice {
+  return {
+    sourceRunId: runId,
+    options: RELIC_DEFINITIONS.map((definition) => definition.id),
+    selectedId: null,
+    commitId: null,
+  };
+}
+
 /**
  * The terminal loss transition (CA-14): the zero-integrity run is removed,
  * the profile records the death via the committed floor-entry rule
@@ -640,7 +684,10 @@ function deathTransition(
     activeSkillIds: Object.freeze([...finalizedRun.build.activeSkillIds]),
     passiveEquipmentIds: Object.freeze([...finalizedRun.build.passiveEquipmentIds]),
     carryOverRelicId: finalizedRun.build.carryOverRelicId,
-    shardsEarned: 0,
+    shardsEarned: terminalShardAward({
+      reachedDepth: finalizedRun.depth,
+      bossesDefeated: finalizedRun.progress.bossesDefeated,
+    }),
     terminalReason: "death",
     completedAt: command.now,
   });
@@ -671,6 +718,7 @@ function deathTransition(
       // other instructions (which also name the pre-transition revision).
       expectedRevision: state.livingRun?.revision ?? finalizedRun.revision,
       summary,
+      pendingRelicChoice: pendingRelicChoiceFor(finalizedRun.runId),
     },
   };
 }
@@ -988,6 +1036,15 @@ function reportCombatOutcome(
       ...run,
       roomState: updatedRoom,
       runCurrency: run.runCurrency + grant,
+      // CA-17: the boss room's clear outcome is the "defeated" fact; the
+      // CA-02 ledger above guarantees it is recorded exactly once.
+      progress:
+        room.roomType === "boss"
+          ? {
+              ...run.progress,
+              bossesDefeated: run.progress.bossesDefeated + 1,
+            }
+          : run.progress,
       revision: run.revision + 1,
       updatedAt: command.now,
       lastCommitId: command.commitId,
@@ -1409,6 +1466,113 @@ function selectReward(
   };
 }
 
+function resolveRelicChoiceMetadataField(
+  command: Extract<RunCommand, { type: "ResolveRelicChoice" }>,
+): string | null {
+  if (!Number.isFinite(command.now)) return "now";
+  if (!isNonEmptyString(command.commitId)) return "commitId";
+  if (!isSafeNonNegativeInteger(command.expectedProfileRevision)) {
+    return "expectedProfileRevision";
+  }
+  return null;
+}
+
+/**
+ * The terminal's one-time carry-over choice (CA-18). RESOLVE keeps the
+ * pending record with `selectedId` + `commitId` set (the committed schema's
+ * `selectedId ⟺ commitId` coherence), then unlocks AND equips the chosen
+ * relic in one profile mutation — a chosen-but-unequipped relic would
+ * violate the committed `unequipped-relic` rule the moment the next run
+ * starts, and equipping replaces any previously equipped relic (one slot).
+ * DECLINE (null) clears the pending choice and leaves `relicState` alone.
+ * Either way the profile is the whole mutation: the living run, absent at
+ * the terminal, stays absent.
+ */
+function resolveRelicChoice(
+  state: RunState,
+  command: Extract<RunCommand, { type: "ResolveRelicChoice" }>,
+  catalog: ContentCatalog,
+): RunTransition {
+  const badField = resolveRelicChoiceMetadataField(command);
+  if (badField !== null) {
+    return reject(state, { code: "invalid-metadata", field: badField });
+  }
+
+  const invalidState = invalidStateRejection(state, catalog);
+  if (invalidState !== null) {
+    return reject(state, invalidState);
+  }
+
+  if (command.expectedProfileRevision !== state.profile.revision) {
+    return reject(state, {
+      code: "stale-profile-revision",
+      expected: command.expectedProfileRevision,
+      actual: state.profile.revision,
+    });
+  }
+
+  const pending = state.profile.pendingRelicChoice;
+  if (pending === null || pending.selectedId !== null) {
+    return reject(state, { code: "no-pending-relic-choice" });
+  }
+
+  let profile: Profile;
+  if (command.relicId === null) {
+    profile = {
+      ...state.profile,
+      pendingRelicChoice: null,
+      revision: state.profile.revision + 1,
+      updatedAt: command.now,
+      lastCommitId: command.commitId,
+    };
+  } else {
+    if (!pending.options.includes(command.relicId)) {
+      return reject(state, { code: "unknown-relic-choice", relicId: command.relicId });
+    }
+    const relicResult = catalog.getRelic(command.relicId);
+    if (!relicResult.ok) {
+      return reject(state, { code: "unknown-relic-choice", relicId: command.relicId });
+    }
+    const unlocked = state.profile.unlocks.relicIds.includes(command.relicId)
+      ? state.profile.unlocks.relicIds
+      : [...state.profile.unlocks.relicIds, command.relicId];
+    profile = {
+      ...state.profile,
+      pendingRelicChoice: {
+        ...pending,
+        selectedId: command.relicId,
+        commitId: command.commitId,
+      },
+      unlocks: {
+        ...state.profile.unlocks,
+        relicIds: unlocked,
+      },
+      relicState: { equippedForNextRunId: command.relicId },
+      revision: state.profile.revision + 1,
+      updatedAt: command.now,
+      lastCommitId: command.commitId,
+    };
+  }
+
+  const newState: RunState = { profile, livingRun: null };
+  const validation = invalidStateRejection(newState, catalog);
+  if (validation !== null) {
+    return reject(state, validation);
+  }
+
+  return {
+    ok: true,
+    state: newState,
+    persistence: {
+      kind: "resolve-relic-choice",
+      relicId: command.relicId,
+      commitId: command.commitId,
+      expectedProfileRevision: command.expectedProfileRevision,
+      proposedProfile: profile,
+    },
+  };
+}
+
 /**
  * Pure lifecycle transition. Given the current authoritative state and a
  * serializable command, it returns either the next state plus an idempotent
@@ -1445,5 +1609,7 @@ export function runReducer(
       return resolveRoom(state, command, catalog);
     case "SelectReward":
       return selectReward(state, command, catalog);
+    case "ResolveRelicChoice":
+      return resolveRelicChoice(state, command, catalog);
   }
 }

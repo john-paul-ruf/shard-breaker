@@ -5,7 +5,7 @@ import { createContentCatalog } from "../content/catalog";
 import { AIM_MAX_DEVIATION } from "../combat/model";
 import { outcomeIdFor } from "../combat/results";
 import { generateRoomCandidate } from "../random/generators";
-import { battleCurrencyGrant } from "./reducer";
+import { battleCurrencyGrant, terminalShardAward } from "./reducer";
 import { deriveStream } from "../random/seededRng";
 import { routeEventKey } from "./routes";
 import { fromCombatCheckpoint } from "../combat/layout";
@@ -948,6 +948,10 @@ describe("CA-13 — clear-time currency grant", () => {
         boss: candidate.boss,
         resolutionCommitId: candidate.resolutionCommitId,
       },
+      // A boss room only ever exists after its committed route, so the
+      // CA-17 "reached" counter stands at one; the clear below adds the
+      // "defeated" fact on top of it.
+      progress: { roomsResolved: 0, bossesReached: 1, bossesDefeated: 0 },
       revision: 3,
     };
     const bossState = stateWith(bossRun);
@@ -1035,7 +1039,7 @@ describe("CA-14 — death terminal at zero integrity", () => {
       activeSkillIds: [...runBefore.build.activeSkillIds],
       passiveEquipmentIds: [...runBefore.build.passiveEquipmentIds],
       carryOverRelicId: runBefore.build.carryOverRelicId,
-      shardsEarned: 0,
+      shardsEarned: 20,
       terminalReason: "death",
       completedAt: 1_700_000_000_500,
     });
@@ -1142,5 +1146,271 @@ describe("CA-14 — death terminal at zero integrity", () => {
     expect(transition.state.profile.lastRunSummary?.passiveEquipmentIds).toEqual([
       "equipment-fractal-core",
     ]);
+  });
+});
+
+describe("CA-16 — terminal Shards award", () => {
+  function finalLoss(state: RunState): ReturnType<typeof runReducer> {
+    const room = state.livingRun!.roomState!;
+    return runReducer(
+      state,
+      reportOutcomeCommand(state.livingRun!.revision, {
+        outcomeId: outcomeIdFor(room.eventKey, "loss_of_ball", 0),
+        kind: "loss_of_ball",
+      }),
+      catalog,
+    );
+  }
+
+  it("awards 20 per reached depth and 50 per defeated boss", () => {
+    expect(terminalShardAward({ reachedDepth: 1, bossesDefeated: 0 })).toBe(20);
+    expect(terminalShardAward({ reachedDepth: 8, bossesDefeated: 2 })).toBe(260);
+  });
+
+  it("applies the award inside the death transition's summary and instruction", () => {
+    // Depth 8 with three defeated bosses: 20 x 8 + 50 x 3 = 310.
+    const state = runInRoomPhase("battle", {
+      integrityCurrent: 1,
+      depth: 8,
+      cycle: 3,
+      progress: { roomsResolved: 5, bossesReached: 3, bossesDefeated: 3 },
+    });
+    const transition = finalLoss(state);
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    const summary = transition.state.profile.lastRunSummary;
+    expect(summary?.shardsEarned).toBe(310);
+    if (transition.persistence.kind === "finalize-death") {
+      expect(transition.persistence.summary.shardsEarned).toBe(310);
+    }
+  });
+
+  it("keeps Shards permanent: they never touch runCurrency", () => {
+    const state = runInRoomPhase("battle", { integrityCurrent: 1 });
+    const transition = finalLoss(state);
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.profile.shards).toBe(0);
+    expect(transition.state.profile.lastRunSummary?.shardsEarned).toBe(20);
+  });
+
+  it("carries the formula value through parseProfileRecord", () => {
+    const state = runInRoomPhase("battle", { integrityCurrent: 1 });
+    const transition = finalLoss(state);
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    const parsed = parseProfileRecord(transition.state.profile, catalog);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.lastRunSummary?.shardsEarned).toBe(20);
+    }
+  });
+});
+
+describe("CA-17 — boss progress counters", () => {
+  /** Materialize, select the mandatory boss offer, and commit the route. */
+  function committedBossState(baseRun: LivingRun): ReturnType<typeof runReducer> {
+    const materialized = runReducer(
+      stateWith(baseRun),
+      materializeCommand(),
+      catalog,
+    );
+    expect(materialized.ok).toBe(true);
+    if (!materialized.ok) throw new Error("boss materialize must succeed");
+    const offer = materialized.state.livingRun!.routeState!.offers[0]!;
+    const selected = runReducer(
+      materialized.state,
+      selectRouteCommand(offer.offerId, 1),
+      catalog,
+    );
+    expect(selected.ok).toBe(true);
+    if (!selected.ok) throw new Error("boss select must succeed");
+    return runReducer(selected.state, commitRouteCommand(2), catalog);
+  }
+
+  it("increments bossesReached exactly once when a boss room is committed", () => {
+    const baseRun = makeLivingRun({ depth: 3, cycle: 1 });
+    const committed = committedBossState(baseRun);
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    expect(committed.state.livingRun?.roomState?.roomType).toBe("boss");
+    expect(committed.state.livingRun?.progress).toEqual({
+      roomsResolved: 0,
+      bossesReached: 1,
+      bossesDefeated: 0,
+    });
+    expectPersistableLivingRun(committed.state);
+  });
+
+  it("increments bossesDefeated exactly once when the boss clear outcome is accepted", () => {
+    const baseRun = makeLivingRun({ depth: 3, cycle: 1 });
+    const committed = committedBossState(baseRun);
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const room = committed.state.livingRun!.roomState!;
+    const cleared = runReducer(
+      committed.state,
+      reportOutcomeCommand(3, {
+        outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+        kind: "clear",
+      }),
+      catalog,
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.state.livingRun?.progress).toEqual({
+      roomsResolved: 0,
+      bossesReached: 1,
+      bossesDefeated: 1,
+    });
+    expectPersistableLivingRun(cleared.state);
+
+    // The CA-02 ledger keeps the counter once-only: a replayed clear is
+    // rejected and changes nothing.
+    const replay = runReducer(
+      cleared.state,
+      reportOutcomeCommand(4, {
+        outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+        kind: "clear",
+      }),
+      catalog,
+    );
+    expectRejection(replay, "duplicate-outcome-id");
+    expect(replay.state).toBe(cleared.state);
+  });
+
+  it("changes nothing for non-boss rooms", () => {
+    const state = runInRoomPhase("battle");
+    const room = state.livingRun!.roomState!;
+    const cleared = runReducer(
+      state,
+      reportOutcomeCommand(3, {
+        outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+        kind: "clear",
+      }),
+      catalog,
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.state.livingRun?.progress).toEqual({
+      roomsResolved: 0,
+      bossesReached: 0,
+      bossesDefeated: 0,
+    });
+  });
+
+  it("keeps the counters coherent across a persisted-record round-trip", () => {
+    const baseRun = makeLivingRun({ depth: 3, cycle: 1 });
+    const committed = committedBossState(baseRun);
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const room = committed.state.livingRun!.roomState!;
+    const cleared = runReducer(
+      committed.state,
+      reportOutcomeCommand(3, {
+        outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+        kind: "clear",
+      }),
+      catalog,
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+
+    const parsed = parseLivingRunRecord(cleared.state.livingRun, catalog);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.progress).toEqual({
+        roomsResolved: 0,
+        bossesReached: 1,
+        bossesDefeated: 1,
+      });
+    }
+  });
+
+  it("maps the boss counters verbatim into the terminal summary", () => {
+    const baseRun = makeLivingRun({ depth: 3, cycle: 1, integrityCurrent: 1 });
+    const committed = committedBossState(baseRun);
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const state = committed.state;
+    const room = state.livingRun!.roomState!;
+    const transition = runReducer(
+      state,
+      reportOutcomeCommand(state.livingRun!.revision, {
+        outcomeId: outcomeIdFor(room.eventKey, "loss_of_ball", 0),
+        kind: "loss_of_ball",
+      }),
+      catalog,
+    );
+    expect(transition.ok).toBe(true);
+    if (!transition.ok) return;
+    expect(transition.state.profile.lastRunSummary).toMatchObject({
+      reachedDepth: 3,
+      bossesReached: 1,
+      bossesDefeated: 0,
+      // 20 x 3 + 50 x 0
+      shardsEarned: 60,
+    });
+  });
+
+  it("survives the summary round-trip after a boss defeat", () => {
+    const baseRun = makeLivingRun({ depth: 3, cycle: 1 });
+    const committed = committedBossState(baseRun);
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const room = committed.state.livingRun!.roomState!;
+    const cleared = runReducer(
+      committed.state,
+      reportOutcomeCommand(3, {
+        outcomeId: outcomeIdFor(room.eventKey, "clear", 0),
+        kind: "clear",
+      }),
+      catalog,
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.state.livingRun?.progress.bossesDefeated).toBe(1);
+
+    // A later terminal at a deeper depth still carries the defeated-boss
+    // fact: the counters ride the run, not the room.
+    const lossState: RunState = {
+      ...cleared.state,
+      livingRun: {
+        ...cleared.state.livingRun!,
+        depth: 4,
+        cycle: 2,
+        integrityCurrent: 1,
+        roomState: null,
+        routeState: {
+          eventKey: "route:content-1:run-1:4",
+          offers: [
+            {
+              offerId: "route:content-1:run-1:4:offer:room-battle-glassway",
+              roomType: "battle",
+              roomEventKey: "route:content-1:run-1:4:room:room-battle-glassway",
+              riskTier: 1,
+              rewardPreviewId: null,
+              visibleCost: 0,
+              availability: "available",
+            },
+          ],
+          selectedOfferId: null,
+          committed: false,
+        },
+        phase: "route",
+      },
+    };
+    const parsed = parseLivingRunRecord(lossState.livingRun, catalog);
+    expect(parsed.ok, JSON.stringify(parsed.ok ? null : parsed.error)).toBe(true);
+
+    const terminal = runReducer(
+      lossState,
+      reportOutcomeCommand(lossState.livingRun!.revision, {
+        outcomeId: outcomeIdFor("route:content-1:run-1:4", "loss_of_ball", 0),
+        kind: "loss_of_ball",
+      }),
+      catalog,
+    );
+    expect(terminal.ok).toBe(false);
   });
 });
