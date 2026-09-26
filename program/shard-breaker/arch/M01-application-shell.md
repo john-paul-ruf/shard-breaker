@@ -166,6 +166,28 @@ not mutate domain state or call IndexedDB directly.
   catalog-resolved display name in the signal). `runRejectionMessage` covers the two
   new domain rejection codes (`no-pending-relic-choice`, `unknown-relic-choice`).
 
+
+<!-- run-summary-metaprogression SESSION-02 -->
+## Run-summary navigation gate and model builder (run-summary-metaprogression SESSION-02)
+
+- `src/app/navigation.ts` — `ScreenDescriptor` gains `{ readonly id: "run-summary" }`.
+  `deriveScreen` gains the terminal gate **after** every living-run branch and
+  **before** the archive fallback:
+  `hasUnresolvedPendingRelicChoice(state)` = `profile.pendingRelicChoice !== null &&
+  profile.pendingRelicChoice.selectedId === null` → `RUN_SUMMARY_SCREEN`. The persisted
+  pending choice IS the gate (durable across reload, Design Decision 6); `launchMode`
+  is irrelevant on this branch. Descriptor set at HEAD (eight): `home/archive`,
+  `home/checkpoint`, `route-map`, `room`, `room-boss`, `room-combat`, `reward`,
+  `run-summary`.
+- `src/app/App.tsx` — new pure model builder `createRunSummaryModel(state,
+  catalog): RunSummaryModelResult` (`ok: model | ok: false, message`), same contract as
+  the other builders: fail-closed on missing summary or missing pending choice and on
+  an unknown summary class; build/relic copy resolved through
+  `catalog.getSkill`/`getEquipment`/`getRelic` with unknown-ID fallthrough to the raw
+  ID; passes `state.terminalRecord` through. New composition branch
+  `screen.id === "run-summary"` renders `RunSummaryScreen` or `ErrorShell`, placed
+  before the `home` fallback.
+
 ## Change History
 
 | Date | Change |
@@ -173,6 +195,7 @@ not mutate domain state or call IndexedDB directly.
 | 2026-09-24 | combat-engine SESSION-05: Added the room-boss screen branch and boss model builder. |
 | 2026-09-24 | combat-engine SESSION-04/07: Added the room-combat screen branch, combat model builder, combat app command surface, and the CA-13 banked-currency save signal. |
 | 2026-09-25 | run-summary-metaprogression SESSION-01: App command surface gains `terminal/resolve-relic` + handler + transient `terminalRecord` publish — see the fragment below. |
+| 2026-09-25 | run-summary-metaprogression SESSION-02: `run-summary` screen descriptor + `deriveScreen` persisted-pending gate + `createRunSummaryModel` builder + App branch — see the fragment below. |
 | 2026-08-29 | Imported deep-file contract into the Forge registry. |
 | 2026-08-29 | Added the serialized durable application store, launch navigation, React binding, and browser composition root. |
 | 2026-09-14 | route-drafting SESSION-01: Added route/materialize, route/select-offer, route/commit app commands and store handlers with saveCheckpoint persistence. |

@@ -76,12 +76,40 @@
 
 ## Change History
 | 2026-09-22 | room-resolution SESSION-03: Added RoomScreen (shop/recovery/combat-placeholder) and RewardsScreen (3-card radiogroup with replacement disclosure) with catalog-resolved display. |
+<!-- run-summary-metaprogression SESSION-02 -->
+## RunSummaryScreen (run-summary-metaprogression SESSION-02)
+
+- `src/ui/screens/RunSummaryScreen.tsx` — new screen module exporting both the
+  component and its view-model type (the `CombatScreen.tsx` precedent).
+  `RunSummaryScreenViewModel`: summary (runId, className, reachedDepth,
+  bossesReached, bossesDefeated, activeSkillNames, passiveEquipmentNames,
+  shardsEarned, terminalReason "death"|"completion"|"abandoned" — the map is total
+  though only death occurs this feature), `record: { isRecord; priorRecordDepth } |
+  null` (transient, from `AppState.terminalRecord`), `pendingRelicChoice: { options:
+  { id, name, cappedDescription }[] } | null` (non-null only while the persisted
+  `selectedId === null`), `isBusy`, `saveSignal`.
+- Structure per `mocks/run-summary.html`: terminal head (reason-derived stamp/lede),
+  4-tile metrics grid with mock-verbatim accents, catalog-resolved build tags
+  (`data-tag-type`), terminal rule note, relic radiogroup (HomeScreen
+  `moveRadioFocus`/roving tabindex, 44px rows), record callout with transient NEW
+  marker, SaveSignal, danger `Try again`. The mock's `VIEW LOCAL PROFILE` action is
+  omitted — its target screen does not exist (recorded Design Decision).
+- Dispatch contract: option click → `{ type: "terminal/resolve-relic", relicId: <id> }`
+  immediately on selection; `Try again` while unresolved →
+  `{ type: "terminal/resolve-relic", relicId: null }` (decline); `Try again`
+  past-choice → `{ type: "run/return-to-archive" }`. Fail-closed: a resolved/past
+  terminal renders no radiogroup and no relic dispatch surface.
+- S03 selectors: `[data-relic-id="relic-backfeed-cell"]` (radio, name /Backfeed Cell/),
+  `Try again`, radiogroup "Carry-over relic choice"; `data-record` on the metric tile
+  + callout, `data-tag-type`, `data-active` on the crumb, `data-reason` on head/stamp.
+
 
 | Date | Change |
 |------|--------|
 | 2026-08-29 | Added the controlled accessible launch archive and restored-checkpoint composition. |
 | 2026-09-24 | combat-engine SESSION-04: Added CombatScreen, room-combat derivation, App combat model; removed the RoomScreen combat branch and placeholder. |
 | 2026-09-24 | combat-engine SESSION-05: Added BossScreen with room-boss derivation and boss model; BossScreen composes the S04 Arena host. |
+| 2026-09-25 | run-summary-metaprogression SESSION-02: Added RunSummaryScreen (mocks/run-summary.html) with the relic radiogroup + terminal treatment — see the fragment below. |
 | 2026-08-29 | Imported Genesis M08 and screen design contracts into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-02: Added RouteMapScreen with catalog-resolved display, auto-materialize, radiogroup of RouteCards, commit bar, side panel. |
 

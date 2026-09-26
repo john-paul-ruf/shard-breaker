@@ -44,10 +44,24 @@ tokens, but CSS does not import application modules.
 
 ## Change History
 | 2026-09-22 | room-resolution SESSION-03: Added room/reward screen styles (global.css) and responsive reflow (responsive.css). |
+<!-- run-summary-metaprogression SESSION-02 -->
+## Terminal treatment (run-summary-metaprogression SESSION-02)
+
+- `src/styles/global.css` — run-summary terminal treatment appended (token-only,
+  one declaration per line): shell/crumb/head/stamp/grid/panel/metrics/build/tags/
+  final-note/relic/record/actions classes. Stylelint `no-descending-specificity`
+  forced three nested-element selectors to sort above the boss rail `b` rules —
+  visual output unchanged, order is lint-mandated (recorded).
+- `src/styles/responsive.css` — run-summary collapse inside the existing
+  `width <= 1023px` and `width <= 720px` queries (grid collapse, stamp reflow,
+  4→2-column metric tiles) plus one new `prefers-reduced-motion` block (relic hover/
+  stamp glow stop). No existing block reordered.
+
 
 | Date | Change |
 |------|--------|
 | 2026-09-24 | combat-engine SESSION-04: Added combat arena/rail styles and responsive reflow; removed orphaned placeholder styles. |
+| 2026-09-25 | run-summary-metaprogression SESSION-02: Added the run-summary terminal treatment (token-only) + responsive collapse — see the fragment below. |
 | 2026-08-29 | Imported Genesis M10 and design-token contracts into the Forge registry. |
 | 2026-09-14 | route-drafting SESSION-02: Added route-map styles (global.css) and responsive rules (responsive.css). |
 
