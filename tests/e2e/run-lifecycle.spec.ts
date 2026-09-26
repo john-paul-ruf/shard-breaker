@@ -102,16 +102,27 @@ async function startCircuitRogue(page: Page): Promise<StoredLivingRunRecord> {
 
 async function returnToArchive(page: Page): Promise<void> {
   // The store drops every command while a durable save is in flight
-  // (serialized-command contract), so a click during the auto-materialize
-  // window is silently discarded. Wait for the busy window to close first.
-  await expect
-    .poll(async () =>
-      page.locator('[aria-busy="true"]').count(),
-    )
-    .toBe(0);
-  await page
-    .getByRole("button", { name: "Return to archive" })
-    .click();
+  // (serialized-command contract): the auto-materialize window can close
+  // between the aria-busy poll and the click, so the poll alone does not
+  // guarantee the click survives. Prove the outcome instead: retry once
+  // after each busy window until the archive is visibly back — a dropped
+  // dispatch performs no durable write and simply leaves the route open.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await expect
+      .poll(async () => page.locator('[aria-busy="true"]').count())
+      .toBe(0);
+    await page
+      .getByRole("button", { name: "Return to archive" })
+      .click();
+    try {
+      await expect(
+        page.getByRole("heading", { name: "Choose your signal." }),
+      ).toBeVisible({ timeout: 2_000 });
+      return;
+    } catch {
+      // The next pass waits out the current busy window before retrying.
+    }
+  }
   await expect(
     page.getByRole("heading", { name: "Choose your signal." }),
   ).toBeVisible();
@@ -1059,5 +1070,124 @@ test.describe("combat rooms", () => {
     await expect(
       appPage.getByRole("status").filter({ hasText: "Relic choice declined." }),
     ).toBeVisible();
+  });
+
+  test("terminal journey: choose Backfeed Cell resolves once and the next run carries it", async ({
+    appPage,
+  }) => {
+    // Same loss pattern as the death journey: three reload-separated losses
+    // cross CA-14's death boundary into the terminal summary.
+    await startCircuitRogue(appPage);
+    expect(requireProfile(await readShardbreakState(appPage)).shards).toBe(0);
+    await commitBattleRoom(appPage);
+
+    await launchOneVolley(appPage);
+    await waitForLossLedger(appPage, 1);
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: /Glassway \/\/ Battle/ }),
+    ).toBeVisible();
+
+    await launchOneVolley(appPage);
+    await waitForLossLedger(appPage, 2);
+    const atOne = requireLivingRun(await readShardbreakState(appPage));
+    await appPage.reload();
+    await appPage.getByRole("button", { name: "Resume living run" }).click();
+    await expect(
+      appPage.getByRole("heading", { name: /Glassway \/\/ Battle/ }),
+    ).toBeVisible();
+
+    await launchOneVolley(appPage);
+    await expect
+      .poll(
+        async () => {
+          const state = await readShardbreakState(appPage);
+          return state.livingRunKeys.length;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(0);
+
+    // The durable gate lands the terminal summary with the choice open.
+    await expect(
+      appPage.getByRole("heading", { name: "Run terminated." }),
+    ).toBeVisible();
+    const terminal = requireProfile(await readShardbreakState(appPage));
+    expect(terminal.shards).toBe(20);
+    expect(terminal.pendingRelicChoice).toMatchObject({
+      sourceRunId: atOne.runId,
+      selectedId: null,
+      commitId: null,
+    });
+
+    // The busy-window mitigation before dispatching the resolve: the store
+    // drops every command while a durable save is in flight.
+    await expect
+      .poll(async () => appPage.locator('[aria-busy="true"]').count())
+      .toBe(0);
+
+    // Selection IS the commit (CA-18 immediate-on-select): the radiogroup's
+    // Backfeed Cell dispatches terminal/resolve-relic durably.
+    await appPage
+      .getByRole("radiogroup", { name: "Carry-over relic choice" })
+      .getByRole("radio", { name: /Backfeed Cell/ })
+      .click();
+
+    // F1's landed shape: the RESOLVE keeps the pending record with
+    // selectedId + commitId set; the unlock and the equip land in the same
+    // profile mutation (CA-18's three durable facts, asserted on storage).
+    await expect
+      .poll(async () => {
+        const state = await readShardbreakState(appPage);
+        return state.profile?.pendingRelicChoice?.selectedId ?? null;
+      })
+      .toBe("relic-backfeed-cell");
+    const resolved = requireProfile(await readShardbreakState(appPage));
+    expect(resolved.pendingRelicChoice).toMatchObject({
+      sourceRunId: atOne.runId,
+      options: [
+        "relic-backfeed-cell",
+        "relic-quiet-prism",
+        "relic-spare-vector",
+      ],
+      selectedId: "relic-backfeed-cell",
+    });
+    expect(resolved.pendingRelicChoice?.commitId).not.toBeNull();
+    expect(resolved.pendingRelicChoice?.commitId).not.toBe("");
+    expect(resolved.unlocks?.relicIds).toEqual(["relic-backfeed-cell"]);
+    expect(resolved.relicState?.equippedForNextRunId).toBe(
+      "relic-backfeed-cell",
+    );
+    expect(resolved.shards).toBe(20);
+
+    // The choice resolved exactly once: the gate cleared and the archive
+    // took over with the named save signal.
+    await expect(
+      appPage.getByRole("heading", { name: "Choose your signal." }),
+    ).toBeVisible();
+    await expect(
+      appPage
+        .getByRole("status")
+        .filter({ hasText: "Backfeed Cell equipped for the next run." }),
+    ).toBeVisible();
+
+    // CA-19 durability: the resolved terminal is past-choice across a
+    // reload — no gate, no radiogroup, storage unchanged.
+    await appPage.reload();
+    await expect(
+      appPage.getByRole("heading", { name: "Choose your signal." }),
+    ).toBeVisible();
+    await expect(
+      appPage.getByRole("radiogroup", { name: "Carry-over relic choice" }),
+    ).toHaveCount(0);
+    const afterReload = await readShardbreakState(appPage);
+    expect(afterReload.livingRunKeys).toEqual([]);
+    expect(requireProfile(afterReload)).toEqual(resolved);
+
+    // A real start consumes the equip: the next run's build carries the
+    // relic (the committed createInitialLivingRun boundary).
+    const nextRun = await startCircuitRogue(appPage);
+    expect(nextRun.build?.carryOverRelicId).toBe("relic-backfeed-cell");
   });
 });
