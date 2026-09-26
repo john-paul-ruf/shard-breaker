@@ -15,6 +15,7 @@ import { terminalShardAward } from "./reducer";
 import { createInitialRouteState, cycleForDepth, isValidDepth } from "./routes";
 import { RELIC_DEFINITIONS } from "../content/relics";
 import { validateLivingRun, validateProfile, validateRunState } from "./validation";
+import { parseRunStateRecords } from "../../persistence/validation";
 
 const catalog = createContentCatalog();
 const asContentId = (value: string): ContentId => value as ContentId;
@@ -645,5 +646,41 @@ describe("CA-16/CA-18 — terminal economy and relic choice", () => {
     // Depth-1/0-boss death = 20 (the S03 browser value).
     expect(terminalShardAward({ reachedDepth: 1, bossesDefeated: 0 })).toBe(20);
     expect(terminalShardAward({ reachedDepth: 3, bossesDefeated: 1 })).toBe(110);
+  });
+
+  it("feeds the freshly equipped relic to the committed StartRun consumer (CA-18)", () => {
+    const profile = profileWithPendingChoice();
+    const first = runReducer(
+      { profile, livingRun: null },
+      resolveCommand(),
+      catalog,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    // The committed consumer (reducer.ts reads relicState.equippedForNextRunId
+    // into build.carryOverRelicId) picks up the just-resolved relic...
+    const start = runReducer(
+      first.state,
+      startCommand({
+        expectedProfileRevision: first.state.profile.revision,
+      }),
+      catalog,
+    );
+    expect(
+      start.ok,
+      JSON.stringify(start.ok ? null : start.error),
+    ).toBe(true);
+    if (!start.ok) return;
+    expect(start.state.livingRun?.build.carryOverRelicId).toBe(
+      RELIC_DEFINITIONS[0]!.id,
+    );
+
+    // ...and the combined state with that carried build is accepted by the
+    // persistence boundary (the committed relic-locked rule holds).
+    expect(
+      parseRunStateRecords(start.state.profile, start.state.livingRun, catalog)
+        .ok,
+    ).toBe(true);
   });
 });
