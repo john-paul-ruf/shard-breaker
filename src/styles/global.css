@@ -1922,6 +1922,10 @@ button:focus-visible,
   text-transform: uppercase;
 }
 
+.run-summary__final-note b {
+  color: var(--color-signal-danger);
+}
+
 .modifier-chips {
   display: grid;
   gap: var(--space-8);
@@ -1939,3 +1943,429 @@ button:focus-visible,
 .modifier-chip[data-applied="true"] b {
   color: var(--color-signal-violet);
 }
+
+/*
+ * Run terminal composition (mocks/run-summary.html). Desktop is the base
+ * two-region layout — summary panel left, carry-over/rail right — matching
+ * the mock's summary-grid hierarchy; the tablet/phone reflow and
+ * reduced-motion overrides live in responsive.css. State is expressed
+ * through data attributes and borders alongside color, never color alone
+ * (CA-08). Danger is the terminal's reserved signal; violet stays the
+ * relic/meta signal per the design language.
+ */
+
+.run-summary {
+  width: min(1100px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: var(--space-24) 0 var(--space-32);
+}
+
+.run-summary__crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.run-summary__crumb [data-active="true"] {
+  color: var(--color-signal-danger);
+}
+
+.run-summary__head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-16);
+  margin: var(--space-24) 0 var(--space-16);
+}
+
+.run-summary__title {
+  font-weight: 900;
+  font-size: clamp(2.7rem, 6vw, 5.2rem);
+  line-height: 0.84;
+  letter-spacing: -0.1em;
+  text-transform: uppercase;
+}
+
+.run-summary__reason {
+  color: var(--color-signal-danger);
+}
+
+.run-summary__lede {
+  max-width: 530px;
+  margin-top: var(--space-12);
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Reason-derived terminal stamp: red edge treatment per the mock. */
+.run-summary__stamp {
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid rgb(255 94 113 / 50%);
+  border-radius: var(--radius-control);
+  background: rgb(255 94 113 / 7%);
+  color: var(--color-signal-danger);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 10px;
+  line-height: 1.45;
+  letter-spacing: 0.09em;
+  text-align: right;
+  text-transform: uppercase;
+  box-shadow: var(--glow-danger);
+}
+
+.run-summary__stamp small {
+  display: block;
+  margin-top: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+/* Summary grid: panel + narrow side stack (mock's 315px rail). */
+.run-summary__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 315px;
+  gap: var(--space-16);
+  align-items: start;
+}
+
+.run-summary__panel {
+  padding: var(--space-24);
+}
+
+.run-summary__panel-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding-bottom: var(--space-16);
+  border-bottom: 1px solid var(--line-translucent);
+}
+
+.run-summary__panel-head h2 {
+  margin-top: var(--space-8);
+  font-weight: 900;
+  font-size: 22px;
+  letter-spacing: -0.04em;
+  text-transform: uppercase;
+}
+
+.run-summary__panel-copy {
+  margin-top: var(--space-8);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.run-summary__code {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: 0.09em;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+/* Metric tiles: the mock's 4-column grid, one accent per tile. */
+.run-summary__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+
+.run-summary__metric {
+  padding: var(--space-12);
+  border: 1px solid var(--line-translucent);
+  background: rgb(20 30 48 / 58%);
+}
+
+.run-summary__metric span {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  line-height: 1.2;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.run-summary__metric strong {
+  display: block;
+  margin-top: var(--space-8);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.run-summary__build-head strong {
+  color: var(--color-text-primary);
+}
+
+.run-summary__final-note strong {
+  color: var(--color-signal-danger);
+}
+
+/* Tile accents follow the mock's per-tile signals; the record tile pairs
+   its data-record state with a border change so it is never color-only. */
+.run-summary__metric:nth-child(1) strong {
+  color: var(--color-signal-danger);
+}
+
+.run-summary__metric:nth-child(2) strong {
+  color: var(--color-signal-amber);
+}
+
+.run-summary__metric:nth-child(3) strong {
+  color: var(--color-signal-cyan);
+}
+
+.run-summary__metric:nth-child(4) strong {
+  color: var(--color-signal-violet);
+}
+
+.run-summary__metric[data-record="new"] {
+  border-color: rgb(141 124 255 / 45%);
+}
+
+.run-summary__metric[data-record="current"] {
+  border-style: dashed;
+}
+
+/* Build tags: cyan skills, violet passives (the mock's tag classes). */
+.run-summary__build {
+  margin-top: var(--space-16);
+  padding: var(--space-12);
+  border: 1px solid var(--line-translucent);
+  background: rgb(7 10 18 / 37%);
+}
+
+.run-summary__build-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.run-summary__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  margin-top: var(--space-12);
+}
+
+.run-summary__tag {
+  padding: var(--space-8);
+  border: 1px solid rgb(84 246 209 / 35%);
+  border-radius: var(--space-4);
+  color: var(--color-signal-cyan);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.run-summary__tag--equipment {
+  border-color: rgb(141 124 255 / 45%);
+  color: var(--color-signal-violet);
+}
+
+.run-summary__tags-empty {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Terminal rule note: the mock's danger-edged final note. */
+.run-summary__final-note {
+  display: flex;
+  align-items: start;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+  padding: var(--space-12);
+  border-left: 2px solid var(--color-signal-danger);
+  background: rgb(255 94 113 / 6%);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* Carry-over relic rail: the mock's violet carry-over panel. */
+.run-summary__relic-eyebrow {
+  color: var(--color-signal-violet);
+}
+
+.run-summary__side-copy {
+  margin-top: var(--space-8);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.relic-list {
+  display: grid;
+  gap: var(--space-8);
+  margin-top: var(--space-12);
+}
+
+/* Relic option: violet-bordered radio row; selection pairs the violet
+   border and tint with the check glyph and aria-checked. */
+.relic-option {
+  display: grid;
+  grid-template-columns: 29px 1fr auto;
+  gap: var(--space-8);
+  align-items: center;
+  min-height: var(--size-action-target);
+  width: 100%;
+  padding: var(--space-8);
+  border: 1px solid var(--line-translucent);
+  border-radius: var(--radius-control);
+  background: rgb(20 30 48 / 60%);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, transform 0.16s ease;
+}
+
+.relic-option:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.relic-option:not(:disabled):hover {
+  border-color: rgb(141 124 255 / 70%);
+  transform: translateX(2px);
+}
+
+.relic-option__icon {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border: 1px solid var(--color-signal-violet);
+  color: var(--color-signal-violet);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 11px;
+  line-height: 1;
+  transform: rotate(45deg);
+}
+
+.relic-option__icon span {
+  display: block;
+  transform: rotate(-45deg);
+}
+
+.relic-option__name {
+  display: block;
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 10px;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.relic-option__copy {
+  display: block;
+  margin-top: var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.relic-option__check {
+  color: transparent;
+  font-size: 15px;
+}
+
+/* Resolved-after rendering: the radiogroup unmounts entirely, but a
+   resolved terminal that still renders keeps its rows visually inert and
+   the check glyph only ever appears beside an aria-checked="true" row. */
+.relic-option[aria-checked="true"] {
+  border-color: var(--color-signal-violet);
+  background: rgb(141 124 255 / 10%);
+  box-shadow: 0 0 19px rgb(141 124 255 / 12%);
+}
+
+.relic-option[aria-checked="true"] .relic-option__check {
+  color: var(--color-signal-violet);
+}
+
+/* Record callout: amber (the decision/warning signal) with the marker text
+   and data-record attribute carrying the state beyond color. */
+.run-summary__record {
+  padding: var(--space-12);
+  border: 1px solid rgb(255 200 87 / 36%);
+  background: rgb(255 200 87 / 6%);
+}
+
+.run-summary__record[data-record="current"] {
+  border-style: dashed;
+}
+
+.run-summary__record[data-record="none"] {
+  border-style: dashed;
+  opacity: 0.8;
+}
+
+.run-summary__record-label {
+  display: block;
+  color: var(--color-signal-amber);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.run-summary__record-depth {
+  display: block;
+  margin-top: var(--space-8);
+  font-weight: 900;
+  font-size: 22px;
+  letter-spacing: -0.05em;
+}
+
+.run-summary__record-note {
+  display: block;
+  margin-top: var(--space-4);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.run-summary__actions {
+  display: grid;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+
+.run-summary__actions .action-button {
+  width: 100%;
+}
+

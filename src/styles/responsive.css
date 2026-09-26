@@ -49,6 +49,23 @@
   .arena-panel__field {
     min-height: 0;
   }
+
+  /* Run terminal: collapse the summary grid to a single column, summary
+     panel first, then the carry-over rail. */
+  .run-summary__grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Run terminal: the stamp drops under the title at tablet widths. */
+  .run-summary__head {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .run-summary__stamp {
+    width: 100%;
+    text-align: left;
+  }
 }
 
 /* Portrait phone (<= 720px): 56px bar, 16px gutters, urgent run state first,
@@ -104,6 +121,47 @@
 
   .commit-bar .action-button {
     width: 100%;
+  }
+
+  /* Run terminal phone: gutters, full-width stamp, 2-column metric tiles,
+     stacked panel head. */
+  .run-summary {
+    width: min(100% - 32px, 560px);
+    padding: var(--space-24) 0 var(--space-32);
+  }
+
+  .run-summary__head {
+    margin: var(--space-16) 0;
+  }
+
+  .run-summary__panel {
+    padding: var(--space-16);
+  }
+
+  .run-summary__panel-head {
+    align-items: start;
+    flex-direction: column;
+    gap: var(--space-8);
+  }
+
+  .run-summary__code {
+    text-align: left;
+  }
+
+  .run-summary__metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .run-summary__metric {
+    padding: var(--space-8);
+  }
+
+  .run-summary__metric strong {
+    font-size: 17px;
+  }
+
+  .run-summary__actions {
+    margin-top: var(--space-12);
   }
 }
 
@@ -287,5 +345,21 @@
   .telegraph-banner,
   .arena-status {
     animation: none;
+  }
+}
+
+/* Reduced motion: relic-row hover lift stops; the violet selected border
+   and check glyph keep the choice legible. */
+@media (prefers-reduced-motion: reduce) {
+  .relic-option:hover {
+    transform: none;
+  }
+
+  .relic-option[aria-checked="true"] {
+    box-shadow: none;
+  }
+
+  .run-summary__stamp {
+    box-shadow: none;
   }
 }
