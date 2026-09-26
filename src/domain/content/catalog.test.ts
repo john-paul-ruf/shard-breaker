@@ -15,6 +15,7 @@ import {
   ROUTE_SUPPORT_DEFINITIONS,
   SHOP_SERVICE_DEFINITIONS,
 } from "./rooms";
+import { RELIC_DEFINITIONS } from "./relics";
 import type { SkillDefinition } from "./skills";
 import { SKILL_DEFINITIONS } from "./skills";
 
@@ -98,6 +99,7 @@ describe("content catalog", () => {
       ...EQUIPMENT_DEFINITIONS,
       ...ENHANCEMENT_DEFINITIONS,
       ...ENEMY_DEFINITIONS,
+      ...RELIC_DEFINITIONS,
     ];
     const ids = definitions.map((definition) => definition.id);
 
@@ -331,5 +333,50 @@ describe("enemy content facade", () => {
       contentId: "enemy-unknown",
     });
     expect(Object.isFrozen(catalog.listEnemies())).toBe(true);
+  });
+});
+
+describe("relic content facade", () => {
+  it("enumerates exactly the three authored relics in authored order", () => {
+    const catalog = createContentCatalog();
+    expect(catalog.listRelics()).toEqual(RELIC_DEFINITIONS);
+    expect(catalog.listRelics().map((relic) => relic.id)).toEqual([
+      "relic-backfeed-cell",
+      "relic-quiet-prism",
+      "relic-spare-vector",
+    ]);
+  });
+
+  it("resolves each authored relic through a typed lookup", () => {
+    const catalog = createContentCatalog();
+    expect(catalog.getRelic(asContentId("relic-backfeed-cell"))).toMatchObject({
+      ok: true,
+      value: { displayName: "Backfeed Cell" },
+    });
+    expect(catalog.getRelic(asContentId("relic-quiet-prism"))).toMatchObject({
+      ok: true,
+      value: { displayName: "Quiet Prism" },
+    });
+    expect(catalog.getRelic(asContentId("relic-spare-vector"))).toMatchObject({
+      ok: true,
+      value: { displayName: "Spare Vector" },
+    });
+    for (const definition of RELIC_DEFINITIONS) {
+      expect(catalog.hasContent(definition.id)).toBe(true);
+    }
+  });
+
+  it("keeps the unknown-relic lookup rejection typed", () => {
+    const catalog = createContentCatalog();
+    expect(catalog.getRelic(asContentId("relic-unknown"))).toEqual({
+      ok: false,
+      code: "unknown-content-id",
+      contentId: "relic-unknown",
+    });
+  });
+
+  it("returns a frozen relic enumeration", () => {
+    const catalog = createContentCatalog();
+    expect(Object.isFrozen(catalog.listRelics())).toBe(true);
   });
 });

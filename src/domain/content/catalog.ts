@@ -20,6 +20,8 @@ import {
   ROUTE_SUPPORT_DEFINITIONS,
   SHOP_SERVICE_DEFINITIONS,
 } from "./rooms";
+import type { RelicDefinition } from "./relics";
+import { RELIC_DEFINITIONS } from "./relics";
 import type { SkillDefinition } from "./skills";
 import { SKILL_DEFINITIONS } from "./skills";
 
@@ -81,6 +83,8 @@ export interface ContentCatalog {
   getEnhancement(id: ContentId): ContentLookupResult<EnhancementDefinition>;
   listEnemies(): readonly EnemyDefinition[];
   getEnemy(id: ContentId): ContentLookupResult<EnemyDefinition>;
+  listRelics(): readonly RelicDefinition[];
+  getRelic(id: ContentId): ContentLookupResult<RelicDefinition>;
   hasContent(id: ContentId): boolean;
 }
 
@@ -244,6 +248,18 @@ export function createContentCatalog(): ContentCatalog {
     enemiesById.set(definition.id, definition);
   }
 
+  const relicsById = new Map<ContentId, RelicDefinition>();
+  for (const definition of RELIC_DEFINITIONS) {
+    registerKnownId(knownContentIds, definition.id, "relics");
+    if (
+      definition.displayName.trim().length === 0 ||
+      definition.cappedDescription.trim().length === 0
+    ) {
+      throw new Error(`invalid relic definition: ${definition.id}`);
+    }
+    relicsById.set(definition.id, definition);
+  }
+
   if (RECOVERY_RESTORE_AMOUNT !== 1) {
     throw new Error("recovery must restore exactly 1 Integrity");
   }
@@ -256,6 +272,7 @@ export function createContentCatalog(): ContentCatalog {
   const equipment = Object.freeze([...EQUIPMENT_DEFINITIONS]);
   const enhancements = Object.freeze([...ENHANCEMENT_DEFINITIONS]);
   const enemies = Object.freeze([...ENEMY_DEFINITIONS]);
+  const relics = Object.freeze([...RELIC_DEFINITIONS]);
   const initialClassUnlockIds = Object.freeze(
     classes
       .filter((definition) => definition.availability === "initial")
@@ -287,6 +304,8 @@ export function createContentCatalog(): ContentCatalog {
     getEnhancement: (id) => lookup(enhancementsById, id),
     listEnemies: () => enemies,
     getEnemy: (id) => lookup(enemiesById, id),
+    listRelics: () => relics,
+    getRelic: (id) => lookup(relicsById, id),
     hasContent: (id) => knownContentIds.has(id),
   };
   return Object.freeze(catalog);
