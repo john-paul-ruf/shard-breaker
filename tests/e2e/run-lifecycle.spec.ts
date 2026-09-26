@@ -146,7 +146,12 @@ test.describe("run lifecycle", () => {
       },
       unlocks: {
         classIds: ["class-circuit-rogue", "class-glitch-knight"],
+        relicIds: [],
       },
+      relicState: {
+        equippedForNextRunId: null,
+      },
+      pendingRelicChoice: null,
     });
 
     const classes = appPage.getByRole("radiogroup", { name: "Starting class" });
@@ -301,7 +306,7 @@ test.describe("run lifecycle", () => {
     expect(replacement.seed).not.toBe(priorRun.seed);
     await expect(
       appPage.getByRole("status").filter({ hasText: "Saved:" }),
-    ).toContainText("Replacement Glitch Knight run saved at Depth 1");
+    ).toContainText(/(?:Replacement Glitch Knight run saved at Depth 1|Route offers saved at Depth 1)/);
   });
 
   test("rapid double activation commits only one fresh run", async ({
@@ -912,14 +917,20 @@ test.describe("combat rooms", () => {
     appPage,
   }) => {
     await startCircuitRogue(appPage);
+    // CA-16's once-only observation starts from a zero-Shards profile.
+    expect((await readShardbreakState(appPage)).profile?.shards).toBe(0);
     await commitBattleRoom(appPage);
 
     // CA-15's journey contract: each loss is followed by reload + resume so
     // every checkpoint crosses the durable reconstruction boundary.
     await launchOneVolley(appPage);
     await waitForLossLedger(appPage, 1);
-    const atTwo = requireLivingRun(await readShardbreakState(appPage));
+    const atTwoState = await readShardbreakState(appPage);
+    const atTwo = requireLivingRun(atTwoState);
     expect(atTwo.integrityCurrent).toBe(2);
+    // No terminal award surfaces mid-run: the Shards land only at
+    // finalization (CA-16 rides the finalize transaction, not the losses).
+    expect(requireProfile(atTwoState).shards).toBe(0);
 
     await appPage.reload();
     await appPage.getByRole("button", { name: "Resume living run" }).click();
@@ -950,29 +961,103 @@ test.describe("combat rooms", () => {
       )
       .toBe(0);
 
-    // IndexedDB truth: no living run; the profile carries the terminal
-    // summary, the committed floor-entry record, and the finalization ID.
+    // IndexedDB truth: no living run; the profile carries the +20 terminal
+    // award (CA-16: depth-1/0-boss death = 20, surfaced exactly once — 0
+    // across every loss, 20 after the one finalization), the terminal
+    // summary with the truthful zero boss counters (CA-17: no boss was
+    // reached or defeated on this depth-1 path), the committed floor-entry
+    // record, the finalization ID, and the unresolved carry-over choice.
     const state = await readShardbreakState(appPage);
     const profile = requireProfile(state);
+    expect(profile.shards).toBe(20);
     expect(profile.lastRunSummary?.terminalReason).toBe("death");
     expect(profile.lastRunSummary?.runId).toBe(atOne.runId);
     expect(profile.lastRunSummary?.classId).toBe("class-circuit-rogue");
     expect(profile.lastRunSummary?.reachedDepth).toBe(1);
-    expect(profile.lastRunSummary?.shardsEarned).toBe(0);
+    expect(profile.lastRunSummary?.bossesReached).toBe(0);
+    expect(profile.lastRunSummary?.bossesDefeated).toBe(0);
+    expect(profile.lastRunSummary?.shardsEarned).toBe(20);
     expect(profile.lastRunSummary?.completedAt).toBeGreaterThan(0);
     expect(profile.records.highestReachedDepth).toBe(1);
     expect(profile.lastFinalizedRunId).toBe(atOne.runId);
+    expect(profile.pendingRelicChoice).toMatchObject({
+      sourceRunId: atOne.runId,
+      options: [
+        "relic-backfeed-cell",
+        "relic-quiet-prism",
+        "relic-spare-vector",
+      ],
+      selectedId: null,
+      commitId: null,
+    });
     expect(state.livingRun).toBeUndefined();
 
-    // CA-15: reload shows the archive with no living run and the recorded
-    // summary surfaced through the existing profile display.
+    // The durable gate lands the run summary (CA-19): the persisted truth
+    // renders against IndexedDB — +20 Shards, the zero boss counters — with
+    // the transient NEW record marker and the unresolved relic strip.
+    await expect(
+      appPage.getByRole("heading", { name: "Run terminated." }),
+    ).toBeVisible();
+    const metrics = appPage.locator('[aria-label="Run summary metrics"]');
+    await expect(
+      metrics.locator(".run-summary__metric", { hasText: "Reached depth" }),
+    ).toContainText("01");
+    await expect(
+      metrics.locator(".run-summary__metric", { hasText: "Shards earned" }),
+    ).toContainText("+20");
+    await expect(
+      metrics.locator(".run-summary__metric", { hasText: "Bosses cleared" }),
+    ).toContainText("00");
+    await expect(
+      appPage.getByText("Run lost. +20 shards banked to the archive."),
+    ).toBeVisible();
+    await expect(appPage.locator(".run-summary__record")).toHaveAttribute(
+      "data-record",
+      "new",
+    );
+    await expect(
+      appPage
+        .getByRole("radiogroup", { name: "Carry-over relic choice" })
+        .getByRole("radio"),
+    ).toHaveCount(3);
+
+    // The busy-window mitigation before the next boundary: the store drops
+    // every command while a durable save is in flight.
+    await expect
+      .poll(async () => appPage.locator('[aria-busy="true"]').count())
+      .toBe(0);
+
+    // The gate is durable (Design Decision 6): after a reload the terminal
+    // summary is still the landing, and the transient NEW marker is not —
+    // the cleared record projection renders honestly.
     await appPage.reload();
+    await expect(
+      appPage.getByRole("heading", { name: "Run terminated." }),
+    ).toBeVisible();
+    await expect(appPage.locator('[data-record="new"]')).toHaveCount(0);
+    const reloaded = await readShardbreakState(appPage);
+    expect(reloaded.livingRunKeys).toEqual([]);
+    expect(reloaded.profile?.shards).toBe(20);
+    expect(reloaded.profile?.lastRunSummary?.terminalReason).toBe("death");
+
+    // Try again while the choice is unresolved dispatches the decline; the
+    // gate clears and the archive takes over with the recorded summary —
+    // the Shards and records untouched by the decline.
+    await expect
+      .poll(async () => appPage.locator('[aria-busy="true"]').count())
+      .toBe(0);
+    await appPage.getByRole("button", { name: /Try again/ }).click();
     await expect(
       appPage.getByRole("heading", { name: "Choose your signal." }),
     ).toBeVisible();
-    const reloaded = await readShardbreakState(appPage);
-    expect(reloaded.livingRunKeys).toEqual([]);
-    expect(reloaded.profile?.lastRunSummary?.terminalReason).toBe("death");
+    const declined = await readShardbreakState(appPage);
+    expect(declined.profile?.pendingRelicChoice).toBeNull();
+    expect(declined.profile?.shards).toBe(20);
+    expect(declined.profile?.relicState?.equippedForNextRunId).toBeNull();
+    expect(declined.profile?.unlocks?.relicIds).toEqual([]);
     await expect(appPage.getByText(/Depth 01 · local only/)).toBeVisible();
+    await expect(
+      appPage.getByRole("status").filter({ hasText: "Relic choice declined." }),
+    ).toBeVisible();
   });
 });

@@ -27,6 +27,10 @@ export interface StoredProfileRecord {
   readonly shards: number;
   readonly unlocks: {
     readonly classIds: readonly string[];
+    readonly relicIds: readonly string[];
+  };
+  readonly relicState: {
+    readonly equippedForNextRunId: string | null;
   };
   readonly records: {
     readonly highestReachedDepth: number;
@@ -34,6 +38,17 @@ export interface StoredProfileRecord {
     readonly bossesDefeated: number;
   };
   readonly lastRunSummary: StoredRunSummaryRecord | null;
+  /**
+   * As stored (S01's F1 shape): an unresolved choice carries null
+   * `selectedId`/`commitId`, a RESOLVE keeps the record with both set, and
+   * a DECLINE clears it to null.
+   */
+  readonly pendingRelicChoice: {
+    readonly sourceRunId: string;
+    readonly options: readonly string[];
+    readonly selectedId: string | null;
+    readonly commitId: string | null;
+  } | null;
   readonly lastFinalizedRunId: string | null;
 }
 
