@@ -24,6 +24,8 @@ import { BossScreen } from "../ui/screens/BossScreen";
 import type { BossScreenViewModel } from "../ui/screens/BossScreen";
 import { HomeScreen } from "../ui/screens/HomeScreen";
 import type { HomeScreenViewModel } from "../ui/screens/HomeScreen";
+import { RunSummaryScreen } from "../ui/screens/RunSummaryScreen";
+import type { RunSummaryScreenViewModel } from "../ui/screens/RunSummaryScreen";
 import { RewardsScreen } from "../ui/screens/RewardsScreen";
 import type { RewardsScreenViewModel } from "../ui/screens/RewardsScreen";
 import { RoomScreen } from "../ui/screens/RoomScreen";
@@ -81,6 +83,10 @@ function LoadingShell() {
 
 type HomeModelResult =
   | { readonly ok: true; readonly model: HomeScreenViewModel }
+  | { readonly ok: false; readonly message: string };
+
+type RunSummaryModelResult =
+  | { readonly ok: true; readonly model: RunSummaryScreenViewModel }
   | { readonly ok: false; readonly message: string };
 
 type RouteMapModelResult =
@@ -660,6 +666,89 @@ function createRewardsModel(
   };
 }
 
+/**
+ * Build the run terminal's display model (CA-19): fail closed on a terminal
+ * profile missing either half of its required pair (the summary or the
+ * pending choice), resolve build and relic copy through the catalog with the
+ * unknown-ID fallthrough, and pass the transient record projection through.
+ */
+function createRunSummaryModel(
+  state: AppState,
+  catalog: ContentCatalog,
+): RunSummaryModelResult {
+  const profile = state.profile;
+  if (state.loadStatus !== "ready" || profile === null) {
+    return {
+      ok: false,
+      message: "The local profile was not available after archive validation.",
+    };
+  }
+  const summary = profile.lastRunSummary;
+  if (summary === null) {
+    return {
+      ok: false,
+      message: "The saved profile has no finalized run summary to display.",
+    };
+  }
+  const pending = profile.pendingRelicChoice;
+  if (pending === null) {
+    return {
+      ok: false,
+      message: "The saved profile has no carry-over relic choice to display.",
+    };
+  }
+
+  const classResult = catalog.getClass(summary.classId);
+  if (!classResult.ok) {
+    return {
+      ok: false,
+      message: "The saved run summary references an unknown class.",
+    };
+  }
+
+  const activeSkillNames = summary.activeSkillIds.map((skillId) => {
+    const result = catalog.getSkill(skillId);
+    return result.ok ? result.value.displayName : skillId;
+  });
+  const passiveEquipmentNames = summary.passiveEquipmentIds.map((itemId) => {
+    const result = catalog.getEquipment(itemId);
+    return result.ok ? result.value.displayName : itemId;
+  });
+  const pendingRelicChoice: RunSummaryScreenViewModel["pendingRelicChoice"] = {
+    options: pending.options.map((relicId) => {
+      const result = catalog.getRelic(relicId);
+      return {
+        id: relicId,
+        name: result.ok ? result.value.displayName : relicId,
+        cappedDescription: result.ok
+          ? result.value.cappedDescription
+          : "Unknown relic.",
+      };
+    }),
+  };
+
+  return {
+    ok: true,
+    model: {
+      summary: {
+        runId: summary.runId,
+        className: classResult.value.displayName,
+        reachedDepth: summary.reachedDepth,
+        bossesReached: summary.bossesReached,
+        bossesDefeated: summary.bossesDefeated,
+        activeSkillNames,
+        passiveEquipmentNames,
+        shardsEarned: summary.shardsEarned,
+        terminalReason: summary.terminalReason,
+      },
+      record: state.terminalRecord,
+      pendingRelicChoice,
+      isBusy: state.isBusy,
+      saveSignal: state.saveSignal,
+    },
+  };
+}
+
 /** Bind the external application store to the implemented launch screen. */
 export function App({ store, catalog }: AppProps) {
   const initializedStoreRef = useRef<AppStore | null>(null);
@@ -736,6 +825,15 @@ export function App({ store, catalog }: AppProps) {
       <RouteMapScreen model={routeModel.model} dispatch={dispatch} />
     ) : (
       <ErrorShell message={routeModel.message} />
+    );
+  }
+
+  if (screen.id === "run-summary") {
+    const runSummaryModel = createRunSummaryModel(state, catalog);
+    return runSummaryModel.ok ? (
+      <RunSummaryScreen model={runSummaryModel.model} dispatch={dispatch} />
+    ) : (
+      <ErrorShell message={runSummaryModel.message} />
     );
   }
 

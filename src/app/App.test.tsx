@@ -33,6 +33,7 @@ afterEach(cleanup);
 const catalog = createContentCatalog();
 const CIRCUIT_ROGUE = "class-circuit-rogue" as ContentId;
 const GLITCH_KNIGHT = "class-glitch-knight" as ContentId;
+const BACKFEED_CELL = "relic-backfeed-cell" as ContentId;
 
 function makeProfile(): Profile {
   return createDefaultProfile(catalog, {
@@ -40,6 +41,53 @@ function makeProfile(): Profile {
     now: 1_700_000_000_000,
     commitId: "commit-app-bootstrap",
   });
+}
+
+/** A finalized terminal profile: summary recorded, relic choice still open. */
+function makeTerminalProfile(): Profile {
+  const profile = makeProfile();
+  return {
+    ...profile,
+    lastRunSummary: {
+      runId: "run-terminal-1",
+      classId: CIRCUIT_ROGUE,
+      reachedDepth: 1,
+      bossesReached: 0,
+      bossesDefeated: 0,
+      activeSkillIds: [],
+      passiveEquipmentIds: [],
+      carryOverRelicId: null,
+      shardsEarned: 20,
+      terminalReason: "death",
+      completedAt: 1_700_000_000_400,
+    },
+    pendingRelicChoice: {
+      sourceRunId: "run-terminal-1",
+      options: [
+        "relic-backfeed-cell" as ContentId,
+        "relic-quiet-prism" as ContentId,
+        "relic-spare-vector" as ContentId,
+      ],
+      selectedId: null,
+      commitId: null,
+    },
+  };
+}
+
+/**
+ * The post-resolve durable shape (F1/S01 committed schema): the pending
+ * record is kept with selectedId + commitId set, never nulled by a choose.
+ */
+function makeResolvedProfile(): Profile {
+  const profile = makeTerminalProfile();
+  return {
+    ...profile,
+    pendingRelicChoice: {
+      ...profile.pendingRelicChoice!,
+      selectedId: BACKFEED_CELL,
+      commitId: "commit-resolve",
+    },
+  };
 }
 
 function rewardCard(index: number) {
@@ -149,11 +197,17 @@ function createMemoryRepository(
       },
     ),
     finalizeDeath: vi.fn<RunLifecycleRepository["finalizeDeath"]>(
-      async () => {
+      async (instruction) => {
         if (profile === null) {
           return failure("profile-missing", "No local profile was found.");
         }
         livingRun = null;
+        profile = {
+          ...profile,
+          lastRunSummary: instruction.summary,
+          pendingRelicChoice: instruction.pendingRelicChoice,
+          revision: profile.revision + 1,
+        };
         return success({ profile, livingRun });
       },
     ),
@@ -370,6 +424,64 @@ describe("deriveScreen", () => {
       id: "home",
       mode: "archive",
     });
+  });
+
+  it("derives run-summary only from the persisted unresolved pending choice", () => {
+    const profile = makeTerminalProfile();
+    expect(
+      deriveScreen(
+        state({
+          profile,
+          livingRun: null,
+          launchMode: "archive",
+          terminalRecord: { isRecord: true, priorRecordDepth: 0 },
+        }),
+      ),
+    ).toEqual({ id: "run-summary" });
+
+    // A summary with a resolved pending choice (kept durable with
+    // selectedId + commitId set) is past-choice: the archive takes over.
+    expect(
+      deriveScreen(
+        state({
+          profile: makeResolvedProfile(),
+          livingRun: null,
+          launchMode: "archive",
+        }),
+      ),
+    ).toEqual({ id: "home", mode: "archive" });
+
+    // Decline clears the pending record entirely: gate off.
+    expect(
+      deriveScreen(
+        state({
+          profile: { ...profile, pendingRelicChoice: null },
+          livingRun: null,
+          launchMode: "archive",
+        }),
+      ),
+    ).toEqual({ id: "home", mode: "archive" });
+
+    // The persisted pending choice IS the gate: a corrupt summary-less pair
+    // still derives the terminal; the model builder fail-closes it.
+    expect(
+      deriveScreen(
+        state({
+          profile: { ...profile, lastRunSummary: null },
+          livingRun: null,
+          launchMode: "archive",
+        }),
+      ),
+    ).toEqual({ id: "run-summary" });
+
+    expect(
+      deriveScreen(state({ profile: null, livingRun: null })),
+    ).toEqual({ id: "home", mode: "archive" });
+
+    // A living run never shows a terminal screen even with a pending choice.
+    expect(
+      deriveScreen(state({ profile, launchMode: "checkpoint" })),
+    ).toEqual({ id: "route-map" });
   });
 });
 
@@ -951,5 +1063,116 @@ describe("App boss composition", () => {
     const banner = document.querySelector(".telegraph-banner");
     expect(banner).not.toBeNull();
     expect(banner).toHaveTextContent("TELEGRAPH // PRISM SWEEP IN");
+  });
+});
+
+describe("App run summary composition (CA-19)", () => {
+  function readyState(overrides: Partial<AppState> = {}): AppState {
+    return {
+      loadStatus: "ready",
+      profile: makeTerminalProfile(),
+      livingRun: null,
+      selectedClassId: CIRCUIT_ROGUE,
+      launchMode: "archive",
+      isReplacementGuardOpen: false,
+      isBusy: false,
+      saveSignal: null,
+      fatalMessage: null,
+      // The transient record marker is cleared by initialize; the NEW
+      // callout is proven at the component level (RunSummaryScreen tests).
+      terminalRecord: null,
+      ...overrides,
+    };
+  }
+
+  function terminalRepository(initialProfile: Profile): RunLifecycleRepository {
+    let profile = initialProfile;
+    return {
+      bootstrapProfile: vi.fn(),
+      loadState: vi.fn(async () => success({ profile, livingRun: null })),
+      startRun: vi.fn(),
+      abandonRun: vi.fn(),
+      saveCheckpoint: vi.fn(),
+      finalizeDeath: vi.fn(),
+      resolveRelicChoice: vi.fn<RunLifecycleRepository["resolveRelicChoice"]>(
+        async (instruction) => {
+          profile = instruction.proposedProfile;
+          return success({ profile, livingRun: null });
+        },
+      ),
+    };
+  }
+
+  it("renders the run summary screen for a finalized profile with an unresolved choice", async () => {
+    const store = createStore(terminalRepository(readyState().profile!));
+    renderApp(store);
+
+    expect(
+      await screen.findByRole("heading", { name: "Run terminated." }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Shards earned")).toBeInTheDocument();
+    expect(screen.getByText("+20")).toBeInTheDocument();
+    const group = screen.getByRole("radiogroup", {
+      name: "Carry-over relic choice",
+    });
+    expect(within(group).getAllByRole("radio")).toHaveLength(3);
+  });
+
+  it("resolves through the screen and lands on the archive (post-resolve derivation)", async () => {
+    const user = userEvent.setup();
+    const store = createStore(terminalRepository(readyState().profile!));
+    renderApp(store);
+    await screen.findByRole("heading", { name: "Run terminated." });
+
+    await user.click(screen.getByRole("radio", { name: /Backfeed Cell/ }));
+    await waitFor(() =>
+      expect(
+        store.getSnapshot().profile?.pendingRelicChoice?.selectedId,
+      ).toBe(BACKFEED_CELL),
+    );
+    // The durable record is KEPT with selectedId + commitId set (S01's
+    // committed schema), and the gate now routes away to the archive.
+    const committed = store.getSnapshot().profile!;
+    expect(committed.pendingRelicChoice).toMatchObject({
+      selectedId: BACKFEED_CELL,
+      commitId: expect.any(String),
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Choose your signal." }),
+    ).toBeInTheDocument();
+  });
+
+  it("declines through Try again and lands on the archive (gate off)", async () => {
+    const user = userEvent.setup();
+    const store = createStore(terminalRepository(readyState().profile!));
+    renderApp(store);
+    await screen.findByRole("heading", { name: "Run terminated." });
+
+    await user.click(screen.getByRole("button", { name: /Try again/ }));
+    await waitFor(() =>
+      expect(store.getSnapshot().profile?.pendingRelicChoice).toBeNull(),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Choose your signal." }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Relic choice declined.",
+    );
+  });
+
+  it("fail-closes to the ErrorShell on a summary-less pending pair", async () => {
+    const profile = {
+      ...readyState().profile!,
+      lastRunSummary: null,
+    };
+    const store = createStore(terminalRepository(profile));
+    renderApp(store);
+
+    expect(
+      await screen.findByRole("heading", { name: "Local archive unavailable" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "no finalized run summary",
+    );
   });
 });

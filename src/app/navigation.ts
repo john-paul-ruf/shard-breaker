@@ -4,6 +4,7 @@ import type { RoomType } from "../domain/run/model";
 export type ScreenDescriptor =
   | { readonly id: "home"; readonly mode: "archive" }
   | { readonly id: "home"; readonly mode: "checkpoint" }
+  | { readonly id: "run-summary" }
   | { readonly id: "route-map" }
   | { readonly id: "room" }
   | { readonly id: "room-boss" }
@@ -17,6 +18,9 @@ const ARCHIVE_SCREEN: ScreenDescriptor = Object.freeze({
 const CHECKPOINT_SCREEN: ScreenDescriptor = Object.freeze({
   id: "home",
   mode: "checkpoint",
+});
+const RUN_SUMMARY_SCREEN: ScreenDescriptor = Object.freeze({
+  id: "run-summary",
 });
 const ROUTE_MAP_SCREEN: ScreenDescriptor = Object.freeze({ id: "route-map" });
 const ROOM_SCREEN: ScreenDescriptor = Object.freeze({ id: "room" });
@@ -34,6 +38,19 @@ const COMBAT_ROOM_TYPES: readonly RoomType[] = Object.freeze([
 
 function isCombatRoomType(roomType: RoomType): boolean {
   return COMBAT_ROOM_TYPES.includes(roomType);
+}
+
+/**
+ * Whether the finalized profile still owes the player the terminal's one-time
+ * carry-over choice. The persisted pending record IS the gate (durable across
+ * reload, Design Decision 6): every death finalization emits it unresolved,
+ * the resolve keeps it with `selectedId` set (the committed schema's
+ * `selectedId ⟺ commitId` pairing), and the decline clears it — either way
+ * the gate turns off and the archive takes over.
+ */
+function hasUnresolvedPendingRelicChoice(state: AppState): boolean {
+  const pending = state.profile?.pendingRelicChoice;
+  return pending !== null && pending !== undefined && pending.selectedId === null;
 }
 
 /** Derive the implemented screen only from validated application state. */
@@ -61,6 +78,11 @@ export function deriveScreen(state: AppState): ScreenDescriptor {
       return REWARD_SCREEN;
     }
     return CHECKPOINT_SCREEN;
+  }
+  if (state.loadStatus === "ready" && hasUnresolvedPendingRelicChoice(state)) {
+    // The terminal gate sits after every living-run branch (a living run
+    // must never show a terminal screen) and before the archive fallback.
+    return RUN_SUMMARY_SCREEN;
   }
   return ARCHIVE_SCREEN;
 }
