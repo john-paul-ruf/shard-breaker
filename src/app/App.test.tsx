@@ -258,6 +258,7 @@ describe("deriveScreen", () => {
       isBusy: false,
       saveSignal: null,
       fatalMessage: null,
+      terminalRecord: null,
       ...overrides,
     };
   }
@@ -863,6 +864,7 @@ describe("App boss composition", () => {
       isBusy: false,
       saveSignal: null,
       fatalMessage: null,
+      terminalRecord: null,
     };
     expect(deriveScreen({ ...appState, livingRun: bossRoomRun() })).toEqual({
       id: "room-boss",

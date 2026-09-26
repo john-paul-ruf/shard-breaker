@@ -27,4 +27,5 @@ export type AppCommand =
   | { readonly type: "room/buy-shop-item"; readonly itemId: ContentId }
   | { readonly type: "room/commit-recovery" }
   | { readonly type: "room/resolve" }
-  | { readonly type: "reward/select"; readonly cardId: string };
+  | { readonly type: "reward/select"; readonly cardId: string }
+  | { readonly type: "terminal/resolve-relic"; readonly relicId: ContentId | null };

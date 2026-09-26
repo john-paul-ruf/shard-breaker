@@ -17,6 +17,17 @@ export type SaveSignalView =
   | { readonly tone: "rejected"; readonly message: string }
   | null;
 
+/**
+ * The transient record-delta projection (CA-19): computed by the finalize
+ * handler from the pre-finalization snapshot, cleared on the next resolve.
+ * The profile no longer knows the prior record once finalized, so "NEW"
+ * lives here and nowhere durable.
+ */
+export interface TerminalRecordView {
+  readonly isRecord: boolean;
+  readonly priorRecordDepth: number;
+}
+
 export interface AppState {
   readonly loadStatus: LoadStatus;
   readonly profile: Profile | null;
@@ -27,6 +38,7 @@ export interface AppState {
   readonly isBusy: boolean;
   readonly saveSignal: SaveSignalView;
   readonly fatalMessage: string | null;
+  readonly terminalRecord: TerminalRecordView | null;
 }
 
 export interface AppStore {
@@ -54,6 +66,7 @@ const INITIAL_STATE: AppState = Object.freeze({
   isBusy: false,
   saveSignal: null,
   fatalMessage: null,
+  terminalRecord: null,
 });
 
 function firstUnlockedClassId(
@@ -175,7 +188,8 @@ function isDurableCommand(command: AppCommand): boolean {
     command.type === "room/buy-shop-item" ||
     command.type === "room/commit-recovery" ||
     command.type === "room/resolve" ||
-    command.type === "reward/select"
+    command.type === "reward/select" ||
+    command.type === "terminal/resolve-relic"
   );
 }
 
@@ -218,6 +232,7 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
       isBusy: false,
       saveSignal: null,
       fatalMessage: initializationFailureMessage(message),
+      terminalRecord: null,
     });
   }
 
@@ -285,6 +300,7 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
         isBusy: false,
         saveSignal: null,
         fatalMessage: null,
+        terminalRecord: null,
       });
     } catch {
       publishInitializationFailure("The local archive could not be opened.");
@@ -875,6 +891,13 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
       return;
     }
     const livingRun = runState.livingRun;
+    // CA-19: the record delta is computed from the pre-finalization snapshot;
+    // after finalization the profile no longer knows the prior record.
+    const recordBeforeFinalization = {
+      isRecord:
+        runState.livingRun.depth > runState.profile.records.highestReachedDepth,
+      priorRecordDepth: runState.profile.records.highestReachedDepth,
+    };
 
     publish({ isBusy: true, saveSignal: null });
     try {
@@ -897,7 +920,10 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
       if (transition.persistence.kind === "finalize-death") {
         // CA-14: the loss depleted Integrity; the reducer already produced
         // the terminal summary and the no-run state.
-        await handleCombatFinalizeDeath(transition.persistence);
+        await handleCombatFinalizeDeath(
+          transition.persistence,
+          recordBeforeFinalization,
+        );
         return;
       }
       if (
@@ -950,6 +976,7 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
    */
   async function handleCombatFinalizeDeath(
     instruction: FinalizeDeathPersistenceInstruction,
+    recordBeforeFinalization: TerminalRecordView,
   ): Promise<void> {
     const finalize = dependencies.repository.finalizeDeath;
     if (finalize === undefined) {
@@ -967,14 +994,21 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
         return;
       }
 
+      // CA-16: the terminal Shards award rides the same finalization; the
+      // committed delta names the amount in the bounded save feedback.
+      const shards = committed.value.profile.lastRunSummary?.shardsEarned ?? 0;
       publish({
         profile: committed.value.profile,
         livingRun: null,
         launchMode: "archive",
         isBusy: false,
+        terminalRecord: recordBeforeFinalization,
         saveSignal: {
           tone: "saved",
-          message: `Run lost. The archive records Depth ${String(committed.value.profile.lastRunSummary?.reachedDepth ?? 0)}.`,
+          message:
+            shards > 0
+              ? `Run lost. +${String(shards)} shards banked to the archive.`
+              : "Run lost. The archive records the terminal.",
         },
       });
     } catch {
@@ -1139,6 +1173,84 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
     } catch {
       rejectCommand(
         "The reward selection could not be saved. The last committed archive remains available.",
+      );
+    }
+  }
+
+  /**
+   * The terminal's one-time carry-over choice (CA-18): reducer
+   * `ResolveRelicChoice` first, then the repository's one-transaction
+   * capability, then the fresh profile plus a save signal naming the
+   * outcome. `relicId: null` is the decline path the transaction table
+   * requires; the terminal record marker clears on either resolution.
+   */
+  async function handleTerminalResolveRelic(relicId: ContentId | null): Promise<void> {
+    const runState = currentRunState();
+    if (runState === null) {
+      rejectCommand("No local profile is available for that action.");
+      return;
+    }
+
+    publish({ isBusy: true, saveSignal: null });
+    try {
+      const transition = runReducer(
+        runState,
+        {
+          type: "ResolveRelicChoice",
+          relicId,
+          expectedProfileRevision: runState.profile.revision,
+          commitId: dependencies.createId(),
+          now: dependencies.clock(),
+        },
+        dependencies.catalog,
+      );
+      if (!transition.ok) {
+        rejectCommand(runRejectionMessage(transition.error));
+        return;
+      }
+      if (
+        transition.persistence.kind !== "resolve-relic-choice" ||
+        transition.state.livingRun !== null
+      ) {
+        rejectCommand("The relic choice could not be prepared safely.");
+        return;
+      }
+
+      const committed = await dependencies.repository.resolveRelicChoice(
+        transition.persistence,
+      );
+      if (!committed.ok) {
+        rejectCommand(
+          `The relic choice was not saved. ${boundedAdapterMessage(committed.error.message)}`,
+        );
+        return;
+      }
+      if (committed.value.livingRun !== null) {
+        rejectCommand("The archive was not present after the save completed.");
+        return;
+      }
+
+      let resolvedName: string | null = null;
+      if (relicId !== null) {
+        const relicResult = dependencies.catalog.getRelic(relicId);
+        resolvedName = relicResult.ok ? relicResult.value.displayName : null;
+      }
+      publish({
+        profile: committed.value.profile,
+        livingRun: null,
+        isBusy: false,
+        terminalRecord: null,
+        saveSignal: {
+          tone: "saved",
+          message:
+            relicId === null
+              ? "Relic choice declined."
+              : `${resolvedName ?? "Relic"} equipped for the next run.`,
+        },
+      });
+    } catch {
+      rejectCommand(
+        "The relic choice could not be saved. The last committed archive remains available.",
       );
     }
   }
@@ -1348,6 +1460,9 @@ export function createAppStore(dependencies: AppStoreDependencies): AppStore {
         return;
       case "reward/select":
         await handleSelectReward(command.cardId);
+        return;
+      case "terminal/resolve-relic":
+        await handleTerminalResolveRelic(command.relicId);
         return;
     }
     assertNever(command);

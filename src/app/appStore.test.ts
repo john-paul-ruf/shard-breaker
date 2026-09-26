@@ -72,7 +72,9 @@ function repositoryFor(
     abandonRun: vi.fn(async () => success(state)),
     saveCheckpoint: vi.fn(async () => success(state)),
     finalizeDeath: vi.fn(async () => success(state)),
-    resolveRelicChoice: vi.fn(async () => success(state)),
+    resolveRelicChoice: vi.fn(async (instruction: { proposedProfile: Profile }) =>
+      success({ profile: instruction.proposedProfile, livingRun: null as LivingRun | null }),
+    ),
     ...overrides,
   };
 }
@@ -1465,5 +1467,183 @@ describe("createAppStore combat commands", () => {
       message: "That combat outcome has already been recorded for this room.",
     });
     expect(repository.saveCheckpoint).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("createAppStore terminal commands", () => {
+  function archivedProfileWithPendingChoice(): Profile {
+    const profile = makeProfile();
+    return {
+      ...profile,
+      revision: 1,
+      shards: 20,
+      lastRunSummary: {
+        runId: "run-terminal",
+        classId: GLITCH_KNIGHT,
+        reachedDepth: 1,
+        bossesReached: 0,
+        bossesDefeated: 0,
+        activeSkillIds: [],
+        passiveEquipmentIds: [],
+        carryOverRelicId: null,
+        shardsEarned: 20,
+        terminalReason: "death",
+        completedAt: 1_700_000_000_400,
+      },
+      lastFinalizedRunId: "run-terminal",
+      pendingRelicChoice: {
+        sourceRunId: "run-terminal",
+        options: [
+          "relic-backfeed-cell" as ContentId,
+          "relic-quiet-prism" as ContentId,
+          "relic-spare-vector" as ContentId,
+        ],
+        selectedId: null,
+        commitId: null,
+      },
+    };
+  }
+
+  it("resolves a chosen relic durably and clears the terminal record", async () => {
+    const profile = archivedProfileWithPendingChoice();
+    const repository = repositoryFor({ profile, livingRun: null });
+    const store = createTestStore(repository, { ids: ["commit-relic"] });
+    await store.initialize();
+
+    await store.dispatch({
+      type: "terminal/resolve-relic",
+      relicId: "relic-backfeed-cell" as ContentId,
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.isBusy).toBe(false);
+    expect(snapshot.terminalRecord).toBeNull();
+    expect(snapshot.profile!.relicState).toEqual({
+      equippedForNextRunId: "relic-backfeed-cell",
+    });
+    expect(snapshot.profile!.unlocks.relicIds).toContain("relic-backfeed-cell");
+    expect(snapshot.profile!.pendingRelicChoice).toMatchObject({
+      selectedId: "relic-backfeed-cell",
+      commitId: "commit-relic",
+    });
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Backfeed Cell equipped for the next run.",
+    });
+    expect(
+      vi.mocked(repository.resolveRelicChoice!).mock.calls.at(-1)?.[0],
+    ).toMatchObject({
+      kind: "resolve-relic-choice",
+      relicId: "relic-backfeed-cell",
+      expectedProfileRevision: profile.revision,
+    });
+  });
+
+  it("declines the choice without touching the equipped relic", async () => {
+    const profile = archivedProfileWithPendingChoice();
+    const repository = repositoryFor({ profile, livingRun: null });
+    const store = createTestStore(repository, { ids: ["commit-decline"] });
+    await store.initialize();
+
+    await store.dispatch({ type: "terminal/resolve-relic", relicId: null });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.terminalRecord).toBeNull();
+    expect(snapshot.profile!.pendingRelicChoice).toBeNull();
+    expect(snapshot.profile!.relicState).toEqual({ equippedForNextRunId: null });
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Relic choice declined.",
+    });
+  });
+
+  it("keeps the typed rejection when no pending choice exists", async () => {
+    const repository = repositoryFor({ profile: makeProfile(), livingRun: null });
+    const store = createTestStore(repository);
+    await store.initialize();
+
+    await store.dispatch({
+      type: "terminal/resolve-relic",
+      relicId: "relic-backfeed-cell" as ContentId,
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.profile).not.toBeNull();
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "rejected",
+      message: "There is no unresolved carry-over relic choice to resolve.",
+    });
+  });
+
+  it("names the banked Shards in the finalize save signal and publishes the terminal record (CA-16)", async () => {
+    const profile = makeProfile();
+    const livingRun = makeLivingRun({ integrityCurrent: 1 });
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: [
+        "commit-materialize",
+        "commit-select",
+        "commit-route",
+        "commit-outcome",
+      ],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+
+    await store.dispatch({
+      type: "combat/report-outcome",
+      outcome: {
+        outcomeId: `${eventKey}:outcome:loss_of_ball:0`,
+        kind: "loss_of_ball",
+      },
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.livingRun).toBeNull();
+    // Depth-1, zero-boss death through the committed generator route = 20.
+    expect(snapshot.saveSignal).toMatchObject({
+      tone: "saved",
+      message: "Run lost. +20 shards banked to the archive.",
+    });
+    expect(snapshot.terminalRecord).toEqual({
+      isRecord: true,
+      priorRecordDepth: 0,
+    });
+  });
+
+  it("keeps the terminal record false when the archive already held a deeper record", async () => {
+    const profile: Profile = {
+      ...makeProfile(),
+      records: {
+        highestReachedDepth: 9,
+        highestBossDepth: 6,
+        bossesDefeated: 2,
+      },
+    };
+    const livingRun = makeLivingRun({ integrityCurrent: 1 });
+    const repository = createRouteMemoryRepository(profile, livingRun);
+    const store = createTestStore(repository, {
+      ids: ["commit-materialize", "commit-select", "commit-route", "commit-outcome"],
+      now: 1_700_000_000_600,
+    });
+    await store.initialize();
+    await storeInRoomPhase("battle", store);
+    const eventKey = store.getSnapshot().livingRun!.roomState!.eventKey;
+
+    await store.dispatch({
+      type: "combat/report-outcome",
+      outcome: {
+        outcomeId: `${eventKey}:outcome:loss_of_ball:0`,
+        kind: "loss_of_ball",
+      },
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.terminalRecord).toEqual({
+      isRecord: false,
+      priorRecordDepth: 9,
+    });
   });
 });
