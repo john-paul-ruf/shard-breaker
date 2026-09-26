@@ -15,6 +15,7 @@ import type {
   AbandonRunPersistenceInstruction,
   FinalizeDeathPersistenceInstruction,
   PersistenceResult,
+  ResolveRelicChoicePersistenceInstruction,
   RunLifecycleRepository,
   SaveCheckpointPersistenceInstruction,
   ShardbreakDatabase,
@@ -58,6 +59,7 @@ function transactionFailure<T>(
 function expectedFailure<T>(
   code:
     | "invalid-living-run"
+    | "invalid-profile"
     | "living-run-exists"
     | "living-run-missing"
     | "profile-missing"
@@ -590,8 +592,12 @@ function proposalFromInstruction(
         summary.reachedDepth,
       ),
     },
+    // CA-16: the terminal Shards award lands in the same transaction as
+    // the summary; the profile carries it, never the (deleted) run.
+    shards: storedProfile.shards + summary.shardsEarned,
     lastRunSummary: summary,
     lastFinalizedRunId: summary.runId,
+    pendingRelicChoice: instruction.pendingRelicChoice ?? storedProfile.pendingRelicChoice,
     revision: storedProfile.revision + 1,
     lastCommitId: instruction.commitId,
   };
@@ -629,6 +635,99 @@ function summaryMismatchIssue(
   return null;
 }
 
+/**
+ * CA-18's one-time terminal choice (database.md: "Choose relic or dismiss
+ * terminal summary"). One read/write transaction over the profile store:
+ * validate the stored profile, verify the expected revision, verify an
+ * unresolved pending choice whose source run matches the instruction, apply
+ * the already-validated proposed profile, and return the fresh profile
+ * state. A retry after a committed resolution rejects without changes; every
+ * write validates through the committed parse boundary.
+ */
+async function resolveRelicChoice(
+  database: ShardbreakDatabase,
+  catalog: ContentCatalog,
+  instruction: ResolveRelicChoicePersistenceInstruction,
+): Promise<PersistenceResult<RunState>> {
+  const stores = [PROFILE_STORE_NAME] as const;
+  try {
+    const transaction = database.transaction(PROFILE_STORE_NAME, "readwrite");
+    const storedProfile = await transaction.store.get(CURRENT_RECORD_KEY);
+    if (storedProfile === undefined) {
+      await transaction.done;
+      return expectedFailure(
+        "profile-missing",
+        "No local profile was found.",
+        { operation: "resolve-relic-choice" },
+      );
+    }
+    const profileResult = parseProfileRecord(storedProfile, catalog);
+    if (!profileResult.ok) {
+      await transaction.done;
+      return profileResult;
+    }
+    if (profileResult.value.revision !== instruction.expectedProfileRevision) {
+      await transaction.done;
+      return expectedFailure(
+        "stale-profile-revision",
+        "The profile changed before the relic choice could be resolved.",
+        {
+          expected: instruction.expectedProfileRevision,
+          actual: profileResult.value.revision,
+        },
+      );
+    }
+    const pending = profileResult.value.pendingRelicChoice;
+    if (pending === null || pending.selectedId !== null) {
+      await transaction.done;
+      return expectedFailure(
+        "invalid-profile",
+        "The terminal relic choice was already resolved or does not match.",
+        { field: "pendingRelicChoice" },
+      );
+    }
+
+    // The proposed profile (the reducer's already-validated projection) is
+    // re-checked through the same strict boundary before anything is
+    // written; a stale retry then finds the pending choice resolved.
+    const proposedResult = parseProfileRecord(instruction.proposedProfile, catalog);
+    if (!proposedResult.ok) {
+      await transaction.done;
+      return proposedResult;
+    }
+    if (proposedResult.value.revision !== profileResult.value.revision + 1) {
+      await transaction.done;
+      return expectedFailure(
+        "invalid-profile",
+        "The proposed profile does not advance the stored profile.",
+        { field: "revision" },
+      );
+    }
+    if (
+      instruction.relicId === null
+        ? proposedResult.value.pendingRelicChoice !== null
+        : (proposedResult.value.pendingRelicChoice?.commitId !== instruction.commitId ||
+          proposedResult.value.relicState.equippedForNextRunId !== instruction.relicId ||
+          !proposedResult.value.unlocks.relicIds.includes(instruction.relicId))
+    ) {
+      await transaction.done;
+      return expectedFailure(
+        "invalid-profile",
+        "The proposed profile does not resolve the pending choice.",
+        { field: "pendingRelicChoice" },
+      );
+    }
+
+    await transaction
+      .objectStore(PROFILE_STORE_NAME)
+      .put(proposedResult.value);
+    await transaction.done;
+    return { ok: true, value: { profile: proposedResult.value, livingRun: null } };
+  } catch (cause) {
+    return transactionFailure("resolve-relic-choice", stores, cause);
+  }
+}
+
 /** Construct the atomic profile and living-run lifecycle boundary. */
 export function createRunLifecycleRepository(
   database: ShardbreakDatabase,
@@ -646,5 +745,7 @@ export function createRunLifecycleRepository(
       saveCheckpoint(database, catalog, instruction),
     finalizeDeath: (instruction: FinalizeDeathPersistenceInstruction) =>
       finalizeDeath(database, catalog, instruction),
+    resolveRelicChoice: (instruction: ResolveRelicChoicePersistenceInstruction) =>
+      resolveRelicChoice(database, catalog, instruction),
   });
 }

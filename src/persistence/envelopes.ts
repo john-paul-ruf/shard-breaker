@@ -94,6 +94,11 @@ export type FinalizeDeathPersistenceInstruction = Extract<
   { readonly kind: "finalize-death" }
 >;
 
+export type ResolveRelicChoicePersistenceInstruction = Extract<
+  RunPersistenceInstruction,
+  { readonly kind: "resolve-relic-choice" }
+>;
+
 /** Narrow durable surface consumed by the application orchestration boundary. */
 export interface RunLifecycleRepository {
   bootstrapProfile(
@@ -116,5 +121,13 @@ export interface RunLifecycleRepository {
    */
   finalizeDeath(
     instruction: FinalizeDeathPersistenceInstruction,
+  ): Promise<PersistenceResult<RunState>>;
+  /**
+   * CA-18's one-time terminal choice boundary ("Choose relic or dismiss
+   * terminal summary"). Required capability: one profile read/write
+   * transaction that applies the reducer's proposed profile exactly once.
+   */
+  resolveRelicChoice(
+    instruction: ResolveRelicChoicePersistenceInstruction,
   ): Promise<PersistenceResult<RunState>>;
 }

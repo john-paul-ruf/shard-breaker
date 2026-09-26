@@ -5,11 +5,13 @@ import { describe, expect, it } from "vitest";
 
 import type { ContentId } from "../domain/content/catalog";
 import { createContentCatalog } from "../domain/content/catalog";
+import { RELIC_DEFINITIONS } from "../domain/content/relics";
 import type { RunCommand } from "../domain/run/commands";
 import type { LivingRun, Profile, RunState } from "../domain/run/model";
 import { createInitialLivingRun } from "../domain/run/model";
 import { runReducer } from "../domain/run/reducer";
 import { openDatabase } from "./database";
+import { parseProfileRecord } from "./validation";
 import type {
   AbandonRunPersistenceInstruction,
   FinalizeDeathPersistenceInstruction,
@@ -969,11 +971,22 @@ describe("atomic finalize-death", () => {
           runId: runBefore.runId,
           classId: "class-glitch-knight",
           reachedDepth: runBefore.depth,
-          shardsEarned: 0,
+          shardsEarned: 20,
           terminalReason: "death",
           completedAt: profileMetadata.now + 6,
         });
         expect(finalized.value.profile.lastFinalizedRunId).toBe(runBefore.runId);
+        expect(finalized.value.profile.shards).toBe(profile.shards + 20);
+        expect(finalized.value.profile.pendingRelicChoice).toMatchObject({
+          sourceRunId: runBefore.runId,
+          options: [
+            "relic-backfeed-cell",
+            "relic-quiet-prism",
+            "relic-spare-vector",
+          ],
+          selectedId: null,
+          commitId: null,
+        });
         expect(finalized.value.profile.records.highestReachedDepth).toBe(
           Math.max(profile.records.highestReachedDepth, runBefore.depth),
         );
@@ -986,6 +999,10 @@ describe("atomic finalize-death", () => {
         terminalReason: "death",
       });
       expect(storedProfile?.lastFinalizedRunId).toBe(runBefore.runId);
+      expect(storedProfile?.shards).toBe(profile.shards + 20);
+      expect(storedProfile?.pendingRelicChoice).toMatchObject({
+        sourceRunId: runBefore.runId,
+      });
       expect(storedProfile?.records.highestReachedDepth).toBe(runBefore.depth);
     } finally {
       await closeAndDelete(testDatabase);
@@ -1124,6 +1141,269 @@ describe("atomic finalize-death", () => {
     } finally {
       reopened.value.close();
       await deleteDatabase(testDatabase.factory, testDatabase.name);
+    }
+  });
+});
+
+describe("CA-18 — resolveRelicChoice repository capability", () => {
+  /** Finalize a terminal, then build the reducer's resolve instruction. */
+  async function finalizedStateWithPendingChoice(
+    repository: RunLifecycleRepository,
+  ): Promise<RunState> {
+    const profile = await bootstrap(repository);
+    const roomState = await startBattleRoomAtOneIntegrity(repository, profile);
+    const instruction = finalizeInstructionFor(roomState);
+    const finalized = await repository.finalizeDeath!(instruction);
+    expect(finalized.ok).toBe(true);
+    if (!finalized.ok) throw new Error("finalize must succeed");
+    return finalized.value;
+  }
+
+  function resolveInstruction(
+    state: RunState,
+    overrides: Partial<Parameters<RunLifecycleRepository["resolveRelicChoice"]>[0]> = {},
+  ): Parameters<RunLifecycleRepository["resolveRelicChoice"]>[0] {
+    const transition = runReducer(
+      state,
+      {
+        type: "ResolveRelicChoice",
+        relicId: RELIC_DEFINITIONS[0]!.id,
+        expectedProfileRevision: state.profile.revision,
+        commitId: "commit-resolve",
+        now: profileMetadata.now + 20,
+      },
+      catalog,
+    );
+    if (
+      !transition.ok ||
+      transition.persistence.kind !== "resolve-relic-choice"
+    ) {
+      throw new Error("the choose transition must produce a resolve instruction");
+    }
+    return { ...transition.persistence, ...overrides };
+  }
+
+  it("applies the choose proposal atomically: unlock + equip + resolved pending", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const state = await finalizedStateWithPendingChoice(repository);
+      const instruction = resolveInstruction(state);
+
+      const resolved = await repository.resolveRelicChoice!(instruction);
+
+      expect(resolved.ok).toBe(true);
+      if (resolved.ok) {
+        expect(resolved.value.livingRun).toBeNull();
+        expect(resolved.value.profile.relicState).toEqual({
+          equippedForNextRunId: "relic-backfeed-cell",
+        });
+        expect(resolved.value.profile.unlocks.relicIds).toContain(
+          "relic-backfeed-cell",
+        );
+        expect(resolved.value.profile.pendingRelicChoice).toMatchObject({
+          selectedId: "relic-backfeed-cell",
+          commitId: "commit-resolve",
+        });
+      }
+      const storedProfile = await testDatabase.database.get("profile", "current");
+      expect(storedProfile?.relicState).toEqual({
+        equippedForNextRunId: "relic-backfeed-cell",
+      });
+      expect(storedProfile?.unlocks.relicIds).toContain("relic-backfeed-cell");
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("applies the decline by clearing the pending choice without a relic", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const state = await finalizedStateWithPendingChoice(repository);
+      const transition = runReducer(
+        state,
+        {
+          type: "ResolveRelicChoice",
+          relicId: null,
+          expectedProfileRevision: state.profile.revision,
+          commitId: "commit-decline",
+          now: profileMetadata.now + 20,
+        },
+        catalog,
+      );
+      expect(transition.ok).toBe(true);
+      if (!transition.ok) throw new Error("decline transition must succeed");
+      if (transition.persistence.kind !== "resolve-relic-choice") {
+        throw new Error("decline must produce a resolve instruction");
+      }
+
+      const declined = await repository.resolveRelicChoice!(transition.persistence);
+
+      expect(declined.ok).toBe(true);
+      if (declined.ok) {
+        expect(declined.value.profile.pendingRelicChoice).toBeNull();
+        expect(declined.value.profile.relicState).toEqual({
+          equippedForNextRunId: null,
+        });
+      }
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("rejects a double resolve without any durable change", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const state = await finalizedStateWithPendingChoice(repository);
+      const instruction = resolveInstruction(state);
+      expect((await repository.resolveRelicChoice!(instruction)).ok).toBe(true);
+      const profileAfterFirst = await testDatabase.database.get("profile", "current");
+
+      const retry = await repository.resolveRelicChoice!(instruction);
+
+      // The retry names the pre-resolution revision, so it is rejected as
+      // stale before any pending-choice check — and changes nothing.
+      expect(retry).toMatchObject({
+        ok: false,
+        error: { code: "stale-profile-revision" },
+      });
+      expect(await testDatabase.database.get("profile", "current")).toEqual(
+        profileAfterFirst,
+      );
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("rejects a resolve after the choice was declined", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const state = await finalizedStateWithPendingChoice(repository);
+      const declineTransition = runReducer(
+        state,
+        {
+          type: "ResolveRelicChoice",
+          relicId: null,
+          expectedProfileRevision: state.profile.revision,
+          commitId: "commit-decline",
+          now: profileMetadata.now + 20,
+        },
+        catalog,
+      );
+      expect(declineTransition.ok).toBe(true);
+      if (!declineTransition.ok) throw new Error("decline must succeed");
+      if (declineTransition.persistence.kind !== "resolve-relic-choice") {
+        throw new Error("decline must produce a resolve instruction");
+      }
+      const declined = await repository.resolveRelicChoice!(
+        declineTransition.persistence,
+      );
+      expect(declined.ok).toBe(true);
+      if (!declined.ok) throw new Error("decline apply must succeed");
+      const profileAfterDecline = await testDatabase.database.get("profile", "current");
+
+      const chooseTransition = runReducer(
+        declined.value,
+        {
+          type: "ResolveRelicChoice",
+          relicId: RELIC_DEFINITIONS[0]!.id,
+          expectedProfileRevision: declined.value.profile.revision,
+          commitId: "commit-resolve-after-decline",
+          now: profileMetadata.now + 25,
+        },
+        catalog,
+      );
+      expect(chooseTransition.ok).toBe(false);
+
+      // Even a forged instruction against the cleared profile fails closed.
+      const forged: Parameters<RunLifecycleRepository["resolveRelicChoice"]>[0] = {
+        kind: "resolve-relic-choice",
+        relicId: RELIC_DEFINITIONS[0]!.id,
+        commitId: "commit-resolve-after-decline",
+        expectedProfileRevision: declined.value.profile.revision,
+        proposedProfile: {
+          ...declined.value.profile,
+          pendingRelicChoice: {
+            sourceRunId: "run-1",
+            options: RELIC_DEFINITIONS.map((definition) => definition.id),
+            selectedId: RELIC_DEFINITIONS[0]!.id,
+            commitId: "commit-resolve-after-decline",
+          },
+          relicState: { equippedForNextRunId: RELIC_DEFINITIONS[0]!.id },
+          unlocks: {
+            ...declined.value.profile.unlocks,
+            relicIds: [
+              ...declined.value.profile.unlocks.relicIds,
+              RELIC_DEFINITIONS[0]!.id,
+            ],
+          },
+          revision: declined.value.profile.revision + 1,
+        },
+      };
+      const after = await repository.resolveRelicChoice!(forged);
+
+      expect(after).toMatchObject({
+        ok: false,
+        error: { code: "invalid-profile" },
+      });
+      expect(await testDatabase.database.get("profile", "current")).toEqual(
+        profileAfterDecline,
+      );
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("rejects a stale profile revision without changes", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const state = await finalizedStateWithPendingChoice(repository);
+      const instruction = resolveInstruction(state, {
+        expectedProfileRevision: state.profile.revision + 9,
+      });
+
+      const result = await repository.resolveRelicChoice!(instruction);
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "stale-profile-revision" },
+      });
+      expect(
+        (await testDatabase.database.get("profile", "current"))
+          ?.pendingRelicChoice?.selectedId,
+      ).toBeNull();
+    } finally {
+      await closeAndDelete(testDatabase);
+    }
+  });
+
+  it("keeps the emitted pending choice inside the strict profile schema (accept + rider reject)", async () => {
+    const testDatabase = await openTestDatabase();
+    try {
+      const repository = createRunLifecycleRepository(testDatabase.database, catalog);
+      const state = await finalizedStateWithPendingChoice(repository);
+
+      // Accept: the emitted pending choice round-trips the strict boundary.
+      expect(parseProfileRecord(state.profile, catalog).ok).toBe(true);
+
+      // Rider reject: any extra field fails closed (the S06 lesson).
+      const withRider = {
+        ...state.profile,
+        pendingRelicChoice: {
+          ...state.profile.pendingRelicChoice!,
+          extra: true,
+        },
+      };
+      expect(parseProfileRecord(withRider, catalog)).toMatchObject({
+        ok: false,
+        error: { code: "invalid-profile" },
+      });
+    } finally {
+      await closeAndDelete(testDatabase);
     }
   });
 });

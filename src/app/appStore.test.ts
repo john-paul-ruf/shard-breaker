@@ -72,6 +72,7 @@ function repositoryFor(
     abandonRun: vi.fn(async () => success(state)),
     saveCheckpoint: vi.fn(async () => success(state)),
     finalizeDeath: vi.fn(async () => success(state)),
+    resolveRelicChoice: vi.fn(async () => success(state)),
     ...overrides,
   };
 }
@@ -706,12 +707,22 @@ function createRouteMemoryRepository(
             summary.reachedDepth,
           ),
         },
+        shards: profile.shards + summary.shardsEarned,
         lastRunSummary: summary,
         lastFinalizedRunId: summary.runId,
+        pendingRelicChoice: instruction.pendingRelicChoice ?? profile.pendingRelicChoice,
       };
       currentRun = null as unknown as LivingRun;
       return success({ profile: finalizedProfile, livingRun: null });
     }),
+    resolveRelicChoice: vi.fn<RunLifecycleRepository["resolveRelicChoice"]>(
+      async (instruction) => {
+        return success({
+          profile: instruction.proposedProfile,
+          livingRun: null,
+        });
+      },
+    ),
   };
 }
 
@@ -1378,7 +1389,7 @@ describe("createAppStore combat commands", () => {
       runId: livingRun.runId,
       reachedDepth: depthAtDeath,
       terminalReason: "death",
-      shardsEarned: 0,
+      shardsEarned: 20,
     });
     expect(finalizedProfile!.lastFinalizedRunId).toBe(livingRun.runId);
     expect(snapshot.saveSignal).toMatchObject({ tone: "saved" });

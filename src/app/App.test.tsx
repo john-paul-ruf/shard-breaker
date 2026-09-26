@@ -157,6 +157,15 @@ function createMemoryRepository(
         return success({ profile, livingRun });
       },
     ),
+    resolveRelicChoice: vi.fn<RunLifecycleRepository["resolveRelicChoice"]>(
+      async (instruction) => {
+        if (profile === null) {
+          return failure("profile-missing", "No local profile was found.");
+        }
+        profile = instruction.proposedProfile;
+        return success({ profile, livingRun: null });
+      },
+    ),
   };
 
   return {
